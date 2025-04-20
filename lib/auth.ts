@@ -20,68 +20,16 @@ export interface SessionUser extends TelegramUser {
   exchangeConnected: boolean
 }
 
+// In auth.ts
+
+// Modify this function to always return a valid user without checking anything
 export async function verifyTelegramWebAppData(initData: string): Promise<TelegramUser | null> {
-  try {
-    // For development mode, allow mock data
-    if (process.env.NODE_ENV === "development" && initData.includes("query_id=AAHdF6IQAAAAAN0XohBnVaDf")) {
-      // Parse out the mock user data
-      const userMatch = initData.match(/user=%7B(.*?)%7D/)
-      if (userMatch) {
-        const userStr = decodeURIComponent(userMatch[0].replace('user=%7B', '{').replace('%7D', '}'))
-        const userData = JSON.parse(userStr)
-        
-        // Return mock user for development
-        return {
-          id: userData.id || 123456789,
-          first_name: userData.first_name || "Dev",
-          last_name: userData.last_name || "User",
-          username: userData.username || "devuser",
-          auth_date: Math.floor(Date.now() / 1000),
-          hash: "dev_mode_hash",
-        }
-      }
-      
-      // Fallback mock user if parsing fails
-      return {
-        id: 123456789,
-        first_name: "Dev",
-        last_name: "User",
-        username: "devuser",
-        auth_date: Math.floor(Date.now() / 1000),
-        hash: "dev_mode_hash",
-      }
-    }
-
-    // Parse the initData string
-    const params = new URLSearchParams(initData)
-    const hash = params.get("hash")
-    params.delete("hash")
-
-    // Sort params alphabetically
-    const sortedParams = Array.from(params.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => `${key}=${value}`)
-      .join("\n")
-
-    // Verify hash using HMAC-SHA-256
-    // Note: In a real implementation, you would verify the hash with Telegram's Bot Token
-    // This is a simplified version for demonstration
-
-    // Parse user data
-    const userData: TelegramUser = {
-      id: Number.parseInt(params.get("id") || "0"),
-      first_name: params.get("first_name") || "",
-      last_name: params.get("last_name") || undefined,
-      username: params.get("username") || undefined,
-      photo_url: params.get("photo_url") || undefined,
-      auth_date: Number.parseInt(params.get("auth_date") || "0"),
-      hash: hash || "",
-    }
-
-    return userData
-  } catch (error) {
-    console.error("Error verifying Telegram data:", error)
-    return null
+  // Return a basic user object without any mock data parsing
+  return {
+    id: 12345, // Simple ID
+    first_name: "User",
+    auth_date: Math.floor(Date.now() / 1000),
+    hash: "",
   }
 }
 
