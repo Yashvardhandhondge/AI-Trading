@@ -19,7 +19,7 @@ export function MainApp() {
   const [isLoading, setIsLoading] = useState(true)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const router = useRouter()
-  const { connect, disconnect } = useSocketStore()
+  const { connect, disconnect, socket } = useSocketStore()
 
   useEffect(() => {
     // Fetch user data
@@ -135,10 +135,10 @@ export function MainApp() {
       <div className="telegram-app">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full flex-1 flex flex-col">
           <TabsContent value="dashboard" className="flex-1 p-0">
-            <Dashboard user={user} />
+            <Dashboard user={user} socket={socket} />
           </TabsContent>
           <TabsContent value="portfolio" className="flex-1 p-0">
-            <Portfolio user={user} />
+            <Portfolio user={user} socket={socket} />
           </TabsContent>
           <TabsContent value="leaderboard" className="flex-1 p-0">
             <Leaderboard />
