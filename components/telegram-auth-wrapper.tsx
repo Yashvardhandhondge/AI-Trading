@@ -2,83 +2,38 @@
 
 import type React from "react"
 
-import { useEffect, useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2 } from "lucide-react"
+import { logger } from "@/lib/logger"
 
 interface TelegramAuthWrapperProps {
   children: React.ReactNode
 }
 
 export function TelegramAuthWrapper({ children }: TelegramAuthWrapperProps) {
-  const [isLoading, setIsLoading] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
   useEffect(() => {
-    // For development, you can bypass Telegram authentication
-    const isDevelopment = process.env.NODE_ENV === "development"
-    
-    if (isDevelopment) {
-      // In development, simulate successful authentication
-      const mockAuthForDev = async () => {
-        try {
-          // Call your auth endpoint with mock data
-          const response = await fetch("/api/auth/telegram", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              // Mock initData for development
-              initData: "query_id=AAHdF6IQAAAAAN0XohBnVaDf&user=%7B%22id%22%3A123456789%2C%22first_name%22%3A%22Test%22%2C%22last_name%22%3A%22User%22%2C%22username%22%3A%22testuser%22%2C%22language_code%22%3A%22en%22%7D&auth_date=1677858000&hash=aabbccddeeff"
-            }),
-          })
-
-          if (!response.ok) {
-            throw new Error("Development auth simulation failed")
-          }
-
-          setIsAuthenticated(true)
-        } catch (err) {
-          setError("Development auth simulation failed")
-        } finally {
-          setIsLoading(false)
-        }
-      }
-      
-      mockAuthForDev()
-      return
-    }
-    
-    // PRODUCTION CODE BELOW - actual Telegram WebApp authentication
-    // Check if Telegram WebApp is available
-    const telegram = (window as any).Telegram?.WebApp
-
-    if (!telegram) {
-      setError("This app must be opened from Telegram")
-      setIsLoading(false)
-      return
-    }
-
-    // Initialize Telegram WebApp
-    telegram.ready()
-    telegram.expand()
-
-    // Verify authentication
-    const verifyAuth = async () => {
+    const authenticateUser = async () => {
       try {
-        const initData = telegram.initData
+        // Check if we're in Telegram WebApp
+        if (!window.Telegram || !window.Telegram.WebApp) {
+          throw new Error("Not in Telegram WebApp")
+        }
+
+        // Get the initData from Telegram WebApp
+        const initData = window.Telegram.WebApp.initData
 
         if (!initData) {
-          setError("No authentication data found")
-          setIsLoading(false)
-          return
+          throw new Error("No initData provided by Telegram")
         }
 
+        logger.info("Authenticating with Telegram", { context: "TelegramAuth" })
+
+        // Send the initData to our authentication endpoint
         const response = await fetch("/api/auth/telegram", {
           method: "POST",
           headers: {
@@ -88,47 +43,100 @@ export function TelegramAuthWrapper({ children }: TelegramAuthWrapperProps) {
         })
 
         if (!response.ok) {
-          const data = await response.json()
-          throw new Error(data.error || "Authentication failed")
+          const errorData = await response.json()
+          throw new Error(errorData.message || "Authentication failed")
         }
 
+        logger.info("Authentication successful", { context: "TelegramAuth" })
         setIsAuthenticated(true)
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Authentication failed")
+        const errorMessage = err instanceof Error ? err.message : "Authentication failed"
+        logger.error("Authentication error:", err instanceof Error ? err : new Error(errorMessage), {
+          context: "TelegramAuth",
+        })
+        setError(errorMessage)
       } finally {
         setIsLoading(false)
       }
     }
 
-    verifyAuth()
+    authenticateUser()
   }, [router])
 
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <span className="ml-2">Authenticating...</span>
+        <div className="flex flex-col items-center">
+          <div className="h-12 w-12 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
+          <p className="mt-4 text-muted-foreground">Authenticating...</p>
+        </div>
       </div>
     )
   }
 
-  if (error || !isAuthenticated) {
+  if (error) {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle>Authentication Error</CardTitle>
-            <CardDescription>There was a problem authenticating with Telegram</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">{error || "Please try opening this app from Telegram"}</p>
-          </CardContent>
-          <CardFooter>
-            <Button onClick={() => window.location.reload()} className="w-full">
-              Try Again
-            </Button>
-          </CardFooter>
-        </Card>
+      <div className="flex min-h-screen flex-col items-center justify-center p-4 text-center">
+        <div className="mb-6 rounded-full bg-destructive/10 p-4">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="48"
+            height="48"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-destructive"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+        </div>
+        <h1 className="mb-2 text-2xl font-bold">Authentication Error</h1>
+        <p className="mb-6 text-muted-foreground">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="rounded-md bg-primary px-4 py-2 text-primary-foreground"
+        >
+          Try Again
+        </button>
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center p-4 text-center">
+        <div className="mb-6 rounded-full bg-destructive/10 p-4">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="48"
+            height="48"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-destructive"
+          >
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </div>
+        <h1 className="mb-2 text-2xl font-bold">Access Denied</h1>
+        <p className="mb-6 text-muted-foreground">
+          You need to authenticate through Telegram to access this application.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="rounded-md bg-primary px-4 py-2 text-primary-foreground"
+        >
+          Try Again
+        </button>
       </div>
     )
   }
