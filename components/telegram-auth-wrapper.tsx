@@ -189,7 +189,7 @@ export function TelegramAuthWrapper({ children }: TelegramAuthWrapperProps) {
           onClick={() => window.location.reload()}
           className="rounded-md bg-primary px-4 py-2 text-primary-foreground"
         >
-          Try Again
+          Try Again yash
         </button>
       </div>
     )
