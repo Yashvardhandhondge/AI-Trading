@@ -63,6 +63,71 @@ export function TelegramAuthWrapper({ children }: TelegramAuthWrapperProps) {
     authenticateUser()
   }, [router])
 
+  useEffect(()=>{
+    // PRODUCTION CODE - Telegram WebApp authentication
+// Check if Telegram WebApp is available
+const telegram = (window as any).Telegram?.WebApp
+
+if (!telegram) {
+  console.error("Telegram WebApp is not available - this app must be opened from Telegram")
+  setError("This app must be opened from Telegram")
+  setIsLoading(false)
+  return
+}
+
+// Log Telegram WebApp info for debugging
+console.log("Telegram WebApp info:", {
+  available: !!telegram,
+  initDataUnsafe: telegram.initDataUnsafe,
+  hasInitData: !!telegram.initData,
+  platform: telegram.platform,
+  version: telegram.version
+})
+
+// Initialize Telegram WebApp
+telegram.ready()
+telegram.expand()
+
+// Verify authentication
+const verifyAuth = async () => {
+  try {
+    const initData = telegram.initData
+
+    if (!initData) {
+      console.error("No initData found from Telegram WebApp")
+      setError("No authentication data found")
+      setIsLoading(false)
+      return
+    }
+
+    console.log("Sending initData to authentication endpoint")
+    const response = await fetch("/api/auth/telegram", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ initData }),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      console.error("Authentication failed:", errorData)
+      throw new Error(errorData.error || "Authentication failed")
+    }
+
+    console.log("Authentication successful")
+    setIsAuthenticated(true)
+  } catch (err) {
+    console.error("Authentication error:", err)
+    setError(err instanceof Error ? err.message : "Authentication failed")
+  } finally {
+    setIsLoading(false)
+  }
+}
+
+verifyAuth()
+  },[router])
+
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">

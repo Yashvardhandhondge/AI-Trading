@@ -4,6 +4,7 @@ import { validateTelegramWebAppData } from "@/lib/telegram"
 import { connectToDatabase } from "@/lib/db"
 import { models } from "@/lib/db"
 import { logger } from "@/lib/logger"
+import { setSessionCookie, verifyTelegramWebAppData } from "@/lib/auth"
 
 // Get the bot token from environment variables
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
@@ -22,19 +23,31 @@ if (!JWT_SECRET) {
 export async function POST(request: NextRequest) {
   try {
     // Parse the request body
-    const body = await request.json()
-    const { initData } = body
+    console.log("Received authentication request")
+    const { initData } = await request.json()
+
 
     if (!initData) {
-      return NextResponse.json({ message: "No initData provided" }, { status: 400 })
+      console.error("No initData provided")
+      return NextResponse.json({ error: "No authentication data provided" }, { status: 400 })
     }
+    console.log("Verifying Telegram WebApp data")
+    const telegramUser = await verifyTelegramWebAppData(initData)
+
+    if (!telegramUser) {
+      console.error("Invalid authentication data")
+      return NextResponse.json({ error: "Invalid authentication data" }, { status: 401 })
+    }
+
+    console.log("User authenticated successfully:", telegramUser)
+
+    await connectToDatabase();
 
     // Validate the Telegram WebApp data
     if (!BOT_TOKEN) throw new Error("BOT_TOKEN is required for validation");
     const userData = validateTelegramWebAppData(initData, BOT_TOKEN)
 
-    // Connect to the database
-    await connectToDatabase()
+  
 
     // Find or create the user
     let user = await models.User.findOne({ telegramId: userData.id })
@@ -85,8 +98,8 @@ export async function POST(request: NextRequest) {
       .sign(new TextEncoder().encode(JWT_SECRET))
 
     // Create a response with the token in a cookie
-    const response = NextResponse.json({ message: "Authentication successful" }, { status: 200 })
 
+    const response = NextResponse.json({ success: true })
     // Set the token as an HTTP-only cookie
     response.cookies.set({
       name: "auth_token",
@@ -97,8 +110,9 @@ export async function POST(request: NextRequest) {
       maxAge: 60 * 60 * 24, // 24 hours in seconds
       path: "/",
     })
+    return setSessionCookie(token, response)
 
-    return response
+
   } catch (error) {
     logger.error("Authentication error:", error instanceof Error ? error : new Error(String(error)), {
       context: "TelegramAuth",

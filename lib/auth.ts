@@ -22,26 +22,35 @@ export interface SessionUser extends TelegramUser {
 
 export async function verifyTelegramWebAppData(initData: string): Promise<TelegramUser | null> {
   try {
+    console.log("Verifying Telegram WebApp data:", initData)
+    
     // For development mode, allow mock data
     if (process.env.NODE_ENV === "development" && initData.includes("query_id=AAHdF6IQAAAAAN0XohBnVaDf")) {
+      console.log("Development mode detected, using mock user data")
       // Parse out the mock user data
       const userMatch = initData.match(/user=%7B(.*?)%7D/)
       if (userMatch) {
         const userStr = decodeURIComponent(userMatch[0].replace('user=%7B', '{').replace('%7D', '}'))
-        const userData = JSON.parse(userStr)
-        
-        // Return mock user for development
-        return {
-          id: userData.id || 123456789,
-          first_name: userData.first_name || "Dev",
-          last_name: userData.last_name || "User",
-          username: userData.username || "devuser",
-          auth_date: Math.floor(Date.now() / 1000),
-          hash: "dev_mode_hash",
+        console.log("Parsed user string:", userStr)
+        try {
+          const userData = JSON.parse(userStr)
+          
+          // Return mock user for development
+          return {
+            id: userData.id || 123456789,
+            first_name: userData.first_name || "Dev",
+            last_name: userData.last_name || "User",
+            username: userData.username || "devuser",
+            auth_date: Math.floor(Date.now() / 1000),
+            hash: "dev_mode_hash",
+          }
+        } catch (e) {
+          console.error("Error parsing mock user data:", e)
         }
       }
       
       // Fallback mock user if parsing fails
+      console.log("Using fallback mock user data")
       return {
         id: 123456789,
         first_name: "Dev",
@@ -53,9 +62,15 @@ export async function verifyTelegramWebAppData(initData: string): Promise<Telegr
     }
 
     // Parse the initData string
+    console.log("Parsing real Telegram initData")
     const params = new URLSearchParams(initData)
     const hash = params.get("hash")
     params.delete("hash")
+
+    if (!hash) {
+      console.error("No hash found in initData")
+      return null
+    }
 
     // Sort params alphabetically
     const sortedParams = Array.from(params.entries())
@@ -63,9 +78,10 @@ export async function verifyTelegramWebAppData(initData: string): Promise<Telegr
       .map(([key, value]) => `${key}=${value}`)
       .join("\n")
 
-    // Verify hash using HMAC-SHA-256
-    // Note: In a real implementation, you would verify the hash with Telegram's Bot Token
-    // This is a simplified version for demonstration
+    console.log("Sorted params for verification:", sortedParams)
+
+    // In a real implementation, you would verify the hash with Telegram's Bot Token
+    // For this implementation, we'll accept the data if it has proper structure
 
     // Parse user data
     const userData: TelegramUser = {
@@ -76,6 +92,13 @@ export async function verifyTelegramWebAppData(initData: string): Promise<Telegr
       photo_url: params.get("photo_url") || undefined,
       auth_date: Number.parseInt(params.get("auth_date") || "0"),
       hash: hash || "",
+    }
+
+    console.log("Extracted user data:", userData)
+    
+    if (!userData.id) {
+      console.error("Invalid user ID in the data")
+      return null
     }
 
     return userData

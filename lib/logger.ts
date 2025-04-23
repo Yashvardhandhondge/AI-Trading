@@ -110,7 +110,32 @@ class Logger {
     //   }
     // });
   }
+
+  // For remote logging in production
+  private logToRemoteService(level: LogLevel, message: string, error?: Error, options?: LogOptions): void {
+    if (this.isProduction) {
+      try {
+        fetch('/api/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            level,
+            message,
+            error: error
+              ? { name: error.name, message: error.message, stack: error.stack }
+              : undefined,
+            context: options?.context,
+            userId: options?.userId,
+            timestamp: new Date().toISOString(),
+          }),
+        }).catch(e => console.error('Failed to send log to remote service:', e))
+      } catch {
+        // fail silently
+      }
+    }
+  }
 }
 
 // Export a singleton instance
 export const logger = Logger.getInstance()
+
