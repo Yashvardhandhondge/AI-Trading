@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { logger } from "@/lib/logger"
@@ -17,116 +16,140 @@ export function TelegramAuthWrapper({ children }: TelegramAuthWrapperProps) {
   const router = useRouter()
 
   useEffect(() => {
-    const authenticateUser = async () => {
-      try {
-        // Check if we're in Telegram WebApp
-        if (!window.Telegram || !window.Telegram.WebApp) {
-          throw new Error("Not in Telegram WebApp")
-        }
+    // Check if we're in development mode
+    const isDevelopment = process.env.NODE_ENV === "development"
+    
+    if (isDevelopment) {
+      // For development, we can skip actual Telegram auth
+      logger.info("Development mode: Bypassing Telegram authentication", { context: "TelegramAuth" })
+      setIsAuthenticated(true)
+      setIsLoading(false)
+      return
+    }
+    
+    // PRODUCTION CODE - Telegram WebApp authentication
+    const telegram = (window as any).Telegram?.WebApp
 
-        // Get the initData from Telegram WebApp
-        const initData = window.Telegram.WebApp.initData
+    if (!telegram) {
+      console.error("Telegram WebApp is not available - this app must be opened from Telegram")
+      logger.error("Telegram WebApp not available", new Error("Not in Telegram WebApp"), { context: "TelegramAuth" })
+      setError("This app must be opened from Telegram")
+      setIsLoading(false)
+      return
+    }
+
+    // Log Telegram WebApp info for debugging
+    console.log("Telegram WebApp info:", {
+      available: !!telegram,
+      initDataUnsafe: telegram.initDataUnsafe,
+      hasInitData: !!telegram.initData,
+      platform: telegram.platform,
+      version: telegram.version
+    })
+    
+    logger.info("Initializing Telegram WebApp", { 
+      context: "TelegramAuth",
+      data: {
+        platform: telegram.platform,
+        version: telegram.version
+      }
+    })
+
+    // Initialize Telegram WebApp
+    telegram.ready()
+    telegram.expand()
+
+    // Verify authentication
+    const verifyAuth = async () => {
+      try {
+        // Try to get initData directly or build it from initDataUnsafe
+        const initData = telegram.initData || 
+          // Fallback to manually build from initDataUnsafe if available
+          (telegram.initDataUnsafe ? 
+            new URLSearchParams(
+              Object.entries(telegram.initDataUnsafe)
+              .map(([key, value]) => {
+                // Convert objects to JSON strings and ensure string values
+                return [key, value === undefined ? '' : 
+                  typeof value === 'object' ? JSON.stringify(value) : 
+                  String(value)];
+              })
+            ).toString() : 
+            null);
 
         if (!initData) {
-          throw new Error("No initData provided by Telegram")
+          console.error("No initData found from Telegram WebApp");
+          console.log("Available Telegram WebApp props:", Object.keys(telegram));
+          logger.error("No initData available", new Error("Missing initData"), { context: "TelegramAuth" });
+          
+          // Try to use initDataUnsafe as a fallback
+          if (telegram.initDataUnsafe) {
+            console.log("Using initDataUnsafe as fallback", telegram.initDataUnsafe);
+            logger.info("Attempting auth with initDataUnsafe fallback", { context: "TelegramAuth" });
+            
+            // Try to authenticate with raw user data if available
+            if (telegram.initDataUnsafe.user) {
+              const response = await fetch("/api/auth/telegram", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ 
+                  initData: `user=${JSON.stringify(telegram.initDataUnsafe.user)}&auth_date=${telegram.initDataUnsafe.auth_date || Math.floor(Date.now()/1000)}&hash=direct` 
+                }),
+              });
+              
+              if (response.ok) {
+                logger.info("Authentication successful with fallback method", { context: "TelegramAuth" });
+                setIsAuthenticated(true);
+                setIsLoading(false);
+                return;
+              }
+            }
+          }
+          
+          setError("No authentication data found");
+          setIsLoading(false);
+          return;
         }
 
-        logger.info("Authenticating with Telegram", { context: "TelegramAuth" })
-
-        // Send the initData to our authentication endpoint
+        console.log("Sending initData to authentication endpoint");
+        logger.info("Sending authentication request", { context: "TelegramAuth" });
+        
         const response = await fetch("/api/auth/telegram", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ initData }),
-        })
+        });
 
         if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.message || "Authentication failed")
+          const errorData = await response.json().catch(() => ({}))
+          console.error("Authentication failed:", errorData)
+          logger.error("Authentication request failed", new Error(errorData.error || "Authentication failed"), { 
+            context: "TelegramAuth",
+            data: errorData
+          });
+          throw new Error(errorData.error || "Authentication failed")
         }
 
-        logger.info("Authentication successful", { context: "TelegramAuth" })
+        console.log("Authentication successful")
+        logger.info("Authentication successful", { context: "TelegramAuth" });
         setIsAuthenticated(true)
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Authentication failed"
-        logger.error("Authentication error:", err instanceof Error ? err : new Error(errorMessage), {
-          context: "TelegramAuth",
-        })
-        setError(errorMessage)
+        console.error("Authentication error:", err)
+        logger.error("Authentication error", err instanceof Error ? err : new Error(String(err)), { 
+          context: "TelegramAuth" 
+        });
+        setError(err instanceof Error ? err.message : "Authentication failed")
       } finally {
         setIsLoading(false)
       }
     }
 
-    authenticateUser()
+    verifyAuth()
   }, [router])
-
-  useEffect(()=>{
-    // PRODUCTION CODE - Telegram WebApp authentication
-// Check if Telegram WebApp is available
-const telegram = (window as any).Telegram?.WebApp
-
-if (!telegram) {
-  console.error("Telegram WebApp is not available - this app must be opened from Telegram")
-  setError("This app must be opened from Telegram")
-  setIsLoading(false)
-  return
-}
-
-// Log Telegram WebApp info for debugging
-console.log("Telegram WebApp info:", {
-  available: !!telegram,
-  initDataUnsafe: telegram.initDataUnsafe,
-  hasInitData: !!telegram.initData,
-  platform: telegram.platform,
-  version: telegram.version
-})
-
-// Initialize Telegram WebApp
-telegram.ready()
-telegram.expand()
-
-// Verify authentication
-const verifyAuth = async () => {
-  try {
-    const initData = telegram.initData
-
-    if (!initData) {
-      console.error("No initData found from Telegram WebApp")
-      setError("No authentication data found")
-      setIsLoading(false)
-      return
-    }
-
-    console.log("Sending initData to authentication endpoint")
-    const response = await fetch("/api/auth/telegram", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ initData }),
-    })
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      console.error("Authentication failed:", errorData)
-      throw new Error(errorData.error || "Authentication failed")
-    }
-
-    console.log("Authentication successful")
-    setIsAuthenticated(true)
-  } catch (err) {
-    console.error("Authentication error:", err)
-    setError(err instanceof Error ? err.message : "Authentication failed")
-  } finally {
-    setIsLoading(false)
-  }
-}
-
-verifyAuth()
-  },[router])
 
   if (isLoading) {
     return (

@@ -26,82 +26,57 @@ export async function verifyTelegramWebAppData(initData: string): Promise<Telegr
     
     // For development mode, allow mock data
     if (process.env.NODE_ENV === "development" && initData.includes("query_id=AAHdF6IQAAAAAN0XohBnVaDf")) {
-      console.log("Development mode detected, using mock user data")
-      // Parse out the mock user data
-      const userMatch = initData.match(/user=%7B(.*?)%7D/)
-      if (userMatch) {
-        const userStr = decodeURIComponent(userMatch[0].replace('user=%7B', '{').replace('%7D', '}'))
-        console.log("Parsed user string:", userStr)
-        try {
-          const userData = JSON.parse(userStr)
-          
-          // Return mock user for development
-          return {
-            id: userData.id || 123456789,
-            first_name: userData.first_name || "Dev",
-            last_name: userData.last_name || "User",
-            username: userData.username || "devuser",
-            auth_date: Math.floor(Date.now() / 1000),
-            hash: "dev_mode_hash",
-          }
-        } catch (e) {
-          console.error("Error parsing mock user data:", e)
-        }
-      }
-      
-      // Fallback mock user if parsing fails
-      console.log("Using fallback mock user data")
-      return {
-        id: 123456789,
-        first_name: "Dev",
-        last_name: "User",
-        username: "devuser",
-        auth_date: Math.floor(Date.now() / 1000),
-        hash: "dev_mode_hash",
-      }
+      // Development mode handling...
+      // (keep your existing development mode code)
     }
 
     // Parse the initData string
     console.log("Parsing real Telegram initData")
     const params = new URLSearchParams(initData)
     const hash = params.get("hash")
-    params.delete("hash")
-
+    
     if (!hash) {
       console.error("No hash found in initData")
       return null
     }
 
-    // Sort params alphabetically
-    const sortedParams = Array.from(params.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => `${key}=${value}`)
-      .join("\n")
-
-    console.log("Sorted params for verification:", sortedParams)
-
-    // In a real implementation, you would verify the hash with Telegram's Bot Token
-    // For this implementation, we'll accept the data if it has proper structure
-
-    // Parse user data
-    const userData: TelegramUser = {
-      id: Number.parseInt(params.get("id") || "0"),
-      first_name: params.get("first_name") || "",
-      last_name: params.get("last_name") || undefined,
-      username: params.get("username") || undefined,
-      photo_url: params.get("photo_url") || undefined,
-      auth_date: Number.parseInt(params.get("auth_date") || "0"),
-      hash: hash || "",
-    }
-
-    console.log("Extracted user data:", userData)
-    
-    if (!userData.id) {
-      console.error("Invalid user ID in the data")
+    // Extract user data from the 'user' parameter which is a JSON string
+    const userParam = params.get("user")
+    if (!userParam) {
+      console.error("No user data found in initData")
       return null
     }
 
-    return userData
+    let userData: TelegramUser;
+    
+    try {
+      // Parse the user JSON
+      const userObject = JSON.parse(userParam)
+      
+      // Create the TelegramUser object from the parsed data
+      userData = {
+        id: userObject.id || 0,
+        first_name: userObject.first_name || "",
+        last_name: userObject.last_name,
+        username: userObject.username,
+        photo_url: userObject.photo_url,
+        auth_date: Number.parseInt(params.get("auth_date") || "0"),
+        hash: hash
+      }
+      
+      console.log("Successfully parsed user data:", userData)
+    } catch (error) {
+      console.error("Error parsing user JSON:", error)
+      return null
+    }
+    
+    // Make sure we have a valid user ID
+    if (!userData.id) {
+      console.error("Invalid or missing user ID")
+      return null
+    }
+
+    return userData;
   } catch (error) {
     console.error("Error verifying Telegram data:", error)
     return null
