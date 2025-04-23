@@ -1,24 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { SignJWT } from "jose"
-import { validateTelegramWebAppData } from "@/lib/telegram"
-import { connectToDatabase } from "@/lib/db"
-import { models } from "@/lib/db"
-import { logger } from "@/lib/logger"
-import { setSessionCookie, verifyTelegramWebAppData } from "@/lib/auth"
-
-// Get the bot token from environment variables
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
-
-// Get the JWT secret from environment variables
-const JWT_SECRET = process.env.JWT_SECRET
-
-if (!BOT_TOKEN) {
-  throw new Error("TELEGRAM_BOT_TOKEN is not defined in environment variables")
-}
-
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET is not defined in environment variables")
-}
+import { verifyTelegramWebAppData, createSessionToken, setSessionCookie, type SessionUser } from "@/lib/auth"
+import { connectToDatabase, models } from "@/lib/db"
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,17 +16,63 @@ export async function POST(request: NextRequest) {
     // Verify Telegram WebApp data
     const telegramUser = await verifyTelegramWebAppData(initData)
 
-    if (!telegramUser || !telegramUser.id) {
-      console.error("Invalid authentication data, user:", telegramUser)
+    if (!telegramUser) {
+      console.error("Invalid authentication data")
       return NextResponse.json({ error: "Invalid authentication data" }, { status: 401 })
     }
 
     console.log("User authenticated successfully:", telegramUser)
 
-    // Continue with the rest of your authentication flow...
-    // ...
+    // Connect to database
+    await connectToDatabase()
+
+    // Find or create user
+    let user = await models.User.findOne({ telegramId: telegramUser.id })
+
+    if (!user) {
+      user = await models.User.create({
+        telegramId: telegramUser.id,
+        username: telegramUser.username,
+        firstName: telegramUser.first_name,
+        lastName: telegramUser.last_name,
+        photoUrl: telegramUser.photo_url,
+        authDate: telegramUser.auth_date,
+      })
+    } else {
+      // Update user data if needed
+      user.username = telegramUser.username
+      user.firstName = telegramUser.first_name
+      user.lastName = telegramUser.last_name
+      user.photoUrl = telegramUser.photo_url
+      user.authDate = telegramUser.auth_date
+      user.updatedAt = new Date()
+      await user.save()
+    }
+
+    // Create session user
+    const sessionUser: SessionUser = {
+      id: telegramUser.id,
+      first_name: telegramUser.first_name,
+      last_name: telegramUser.last_name,
+      username: telegramUser.username,
+      photo_url: telegramUser.photo_url,
+      auth_date: telegramUser.auth_date,
+      hash: telegramUser.hash,
+      exchange: user.exchange,
+      exchangeConnected: user.exchangeConnected || false,
+    }
+
+    // Create session token
+    const token = await createSessionToken(sessionUser)
+
+    // Create response
+    const response = NextResponse.json({ success: true })
+
+    // Set session cookie
+    return setSessionCookie(token, response)
   } catch (error) {
     console.error("Authentication error:", error)
+    // Make sure to return a response even when an error occurs
     return NextResponse.json({ error: "Authentication failed" }, { status: 500 })
   }
 }
