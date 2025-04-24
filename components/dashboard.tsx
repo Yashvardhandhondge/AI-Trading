@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Loader2 } from "lucide-react"
 import type { Socket } from "socket.io-client"
 import type { SessionUser } from "@/lib/auth"
@@ -95,7 +96,7 @@ export function Dashboard({ user, socket }: DashboardProps) {
             })
           }
           
-          // Fetch user holdings
+          // Fetch user holdings for SELL signal filtering
           const portfolioFullResponse = await fetch("/api/portfolio")
           if (portfolioFullResponse.ok) {
             const portfolioFullData = await portfolioFullResponse.json()
@@ -187,7 +188,7 @@ export function Dashboard({ user, socket }: DashboardProps) {
         socket.off("portfolio-update")
       }
     }
-  }, [socket, user.exchangeConnected, user.id, userHoldings])
+  }, [socket, user.exchangeConnected, user.id])
 
   const handleSignalAction = async (action: "accept" | "skip", signalId: string) => {
     try {
@@ -251,8 +252,8 @@ export function Dashboard({ user, socket }: DashboardProps) {
     if (!activeSignal) return false
     
     if (activeSignal.type === "SELL") {
-      // Only show SELL signals if the user has the token
-      return userHoldings.some(h => h.token === activeSignal.token && h.amount > 0)
+      // Only show SELL signals if the user has connected an exchange AND owns the token
+      return user.exchangeConnected && userHoldings.some(h => h.token === activeSignal.token && h.amount > 0)
     }
     
     // Always show BUY signals
@@ -339,4 +340,4 @@ export function Dashboard({ user, socket }: DashboardProps) {
       <ConnectExchangeModal open={showConnectExchangeModal} onOpenChange={setShowConnectExchangeModal} />
     </div>
   )
-}
+};

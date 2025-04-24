@@ -5,7 +5,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle, ExternalLink, Check, X, Info, Link2 } from "lucide-react"
+import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle, ExternalLink, Check, X, Info, AlertCircle } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip" 
 
@@ -35,10 +35,6 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
-
-  // If it's a SELL signal, but we don't explicitly know if the user owns the token,
-  // we'll assume they do (since SELL signals should only be shown for tokens the user owns)
-  const canExecuteSell = signal.type === "SELL" ? (userOwnsToken || true) : false
 
   useEffect(() => {
     // Calculate time left
@@ -91,6 +87,7 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
   // Calculate progress percentage for timer
   const totalTime = 10 * 60 // 10 minutes in seconds
   const progressPercentage = (timeLeft / totalTime) * 100
+  const isTimeRunningOut = timeLeft < 60 // Less than 1 minute left
 
   const handleOpenLink = () => {
     if (signal.link) {
@@ -100,16 +97,6 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
 
   return (
     <Card className={`${signal.type === "BUY" ? "border-green-500" : "border-red-500"} relative mb-6`}>
-      {/* Connection Status Badge - Only shown for BUY signals when no exchange is connected */}
-      {signal.type === "BUY" && !exchangeConnected && (
-        <div className="absolute -top-3 right-4 z-10">
-          <Badge variant="destructive" className="flex gap-1 text-xs py-1 px-2 shadow-md">
-            <Link2 className="h-3.5 w-3.5" />
-            Exchange connection required
-          </Badge>
-        </div>
-      )}
-      
       <CardHeader className="pb-2">
         <div className="flex justify-between items-center">
           <CardTitle className="flex items-center">
@@ -131,8 +118,8 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
           </div>
           <div className="space-y-1">
             <p className="text-sm text-muted-foreground">Time Left</p>
-            <p className="text-xl font-bold flex items-center">
-              <Clock className="h-4 w-4 mr-1" />
+            <p className={`text-xl font-bold flex items-center ${isTimeRunningOut ? "text-red-500" : ""}`}>
+              <Clock className={`h-4 w-4 mr-1 ${isTimeRunningOut ? "text-red-500 animate-pulse" : ""}`} />
               {formatTime(timeLeft)}
             </p>
           </div>
@@ -190,16 +177,42 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
           </div>
         )}
 
-        <div className="mt-4">
+        {/* Auto-execution timer with clear messaging */}
+        <div className="mt-4 relative">
           <div className="flex justify-between text-xs mb-1">
-            <span>Auto-execution in {formatTime(timeLeft)}</span>
-            <span>
+            <span className="font-medium">Auto-execution in {formatTime(timeLeft)}</span>
+            <span className="font-medium">
               {signal.type === "BUY" 
-                ? "Buy 10%" 
-                : "Sell Fully"}
+                ? "Will buy 10%" 
+                : "Will sell fully"}
             </span>
           </div>
-          <Progress value={progressPercentage} className="h-2" />
+          <Progress value={progressPercentage} className={`h-2 ${isTimeRunningOut ? "bg-red-200" : ""}`} />
+          
+          {/* Auto-execution messaging */}
+          <div className={`mt-3 p-3 rounded-md ${isTimeRunningOut ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" : "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"}`}>
+            <div className="flex items-start">
+              {isTimeRunningOut ? (
+                <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 mr-2 flex-shrink-0 animate-pulse" />
+              ) : (
+                <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 mr-2 flex-shrink-0" />
+              )}
+              <div>
+                <p className={`text-sm font-medium ${isTimeRunningOut ? "text-red-800 dark:text-red-300" : "text-amber-800 dark:text-amber-300"}`}>
+                  {isTimeRunningOut ? "Auto-execution imminent!" : "Auto-execution will occur when timer expires"}
+                </p>
+                <p className={`text-xs mt-1 ${isTimeRunningOut ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400"}`}>
+                  {exchangeConnected ? (
+                    signal.type === "BUY" 
+                      ? `If you don't take action, the system will automatically buy ${signal.token} worth 10% of your portfolio.`
+                      : `If you don't take action, the system will automatically sell all your ${signal.token} holdings.`
+                  ) : (
+                    `Connect your exchange to enable automatic trading.`
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
 
         {error && (
@@ -210,13 +223,18 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
         )}
         
         {/* Connection requirement notice - show for BUY signals when no exchange is connected */}
-        {signal.type === "BUY" && !exchangeConnected && (
-          <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/30 rounded-md border border-amber-200 dark:border-amber-800">
+        {!exchangeConnected && (
+          <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/30 rounded-md border border-blue-200 dark:border-blue-800">
             <div className="flex items-start">
-              <Info className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 mr-2 flex-shrink-0" />
-              <p className="text-sm text-amber-800 dark:text-amber-300">
-                You need to connect your exchange to execute trades. Your exchange connection is fully encrypted and secure.
-              </p>
+              <Info className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 mr-2 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                  Exchange connection required
+                </p>
+                <p className="text-xs mt-1 text-blue-700 dark:text-blue-400">
+                  You need to connect either Binance or BTCC to execute trades. Your API keys are securely encrypted.
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -229,8 +247,8 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
                 <TooltipTrigger asChild>
                   <div className="flex-1 mr-2">
                     <Button
-                      variant={exchangeConnected ? "default" : "outline"}
-                      className={`w-full ${!exchangeConnected ? "border-blue-500 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 hover:text-blue-700 flex justify-center" : ""}`}
+                      variant={exchangeConnected ? "default" : "default"}
+                      className={`w-full ${!exchangeConnected ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
                       onClick={() => handleAction("accept")}
                       disabled={isLoading}
                     >
