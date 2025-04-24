@@ -5,7 +5,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle } from "lucide-react"
+import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle, ExternalLink, Check, X } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 
 interface Signal {
@@ -16,17 +16,23 @@ interface Signal {
   riskLevel: "low" | "medium" | "high"
   createdAt: string
   expiresAt: string
+  link?: string
+  positives?: string[]
+  warnings?: string[]
+  warning_count?: number
 }
 
 interface SignalCardProps {
   signal: Signal
   onAction: (action: "accept" | "skip", signalId: string) => void
+  exchangeConnected: boolean
 }
 
-export function SignalCard({ signal, onAction }: SignalCardProps) {
+export function SignalCard({ signal, onAction, exchangeConnected }: SignalCardProps) {
   const [timeLeft, setTimeLeft] = useState<number>(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showDetails, setShowDetails] = useState(false)
 
   useEffect(() => {
     // Calculate time left
@@ -80,6 +86,12 @@ export function SignalCard({ signal, onAction }: SignalCardProps) {
   const totalTime = 10 * 60 // 10 minutes in seconds
   const progressPercentage = (timeLeft / totalTime) * 100
 
+  const handleOpenLink = () => {
+    if (signal.link) {
+      window.open(signal.link, "_blank")
+    }
+  }
+
   return (
     <Card className={signal.type === "BUY" ? "border-green-500" : "border-red-500"}>
       <CardHeader className="pb-2">
@@ -110,6 +122,58 @@ export function SignalCard({ signal, onAction }: SignalCardProps) {
           </div>
         </div>
 
+        {/* Ekin API specific data */}
+        {((signal.positives ?? []).length > 0 || (signal.warnings ?? []).length > 0) && (
+          <div className="mt-4">
+            <Button
+              variant="ghost"
+              className="p-0 h-auto text-sm text-muted-foreground flex items-center"
+              onClick={() => setShowDetails(!showDetails)}
+            >
+              {showDetails ? "Hide" : "Show"} signal details
+            </Button>
+
+            {showDetails && (
+              <div className="mt-2 space-y-2 text-sm">
+                {signal.positives && signal.positives.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="font-medium">Positives:</p>
+                    <ul className="space-y-1">
+                      {signal.positives.map((positive, index) => (
+                        <li key={index} className="flex items-start">
+                          <Check className="h-4 w-4 mr-1 text-green-500 mt-0.5" />
+                          <span>{positive}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {signal.warnings && signal.warnings.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="font-medium">Warnings:</p>
+                    <ul className="space-y-1">
+                      {signal.warnings.map((warning, index) => (
+                        <li key={index} className="flex items-start">
+                          <X className="h-4 w-4 mr-1 text-red-500 mt-0.5" />
+                          <span>{warning}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {signal.link && (
+                  <Button variant="outline" size="sm" className="mt-2 text-xs h-8" onClick={handleOpenLink}>
+                    <ExternalLink className="h-3 w-3 mr-1" />
+                    View Chart
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mt-4">
           <div className="flex justify-between text-xs mb-1">
             <span>Auto-execution in {formatTime(timeLeft)}</span>
@@ -135,7 +199,7 @@ export function SignalCard({ signal, onAction }: SignalCardProps) {
               disabled={isLoading}
             >
               {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Buy 10%
+              {exchangeConnected ? "Buy 10%" : "Connect to Buy"}
             </Button>
             <Button variant="outline" className="flex-1" onClick={() => handleAction("skip")} disabled={isLoading}>
               Skip

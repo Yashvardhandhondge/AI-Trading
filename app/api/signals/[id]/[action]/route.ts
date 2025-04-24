@@ -3,12 +3,6 @@ import { getSessionUser } from "@/lib/auth"
 import { connectToDatabase, models } from "@/lib/db"
 import { ExchangeService } from "@/lib/exchange"
 
-interface TradeParams {
-  symbol: string
-  side: 'BUY' | 'SELL'
-  quantity: number
-}
-
 export async function POST(request: NextRequest, { params }: { params: { id: string; action: string } }) {
   try {
     const sessionUser = await getSessionUser()
@@ -40,28 +34,33 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       return NextResponse.json({ error: "Signal not found" }, { status: 404 })
     }
 
-    // Check if user has already received a signal for this token in the last 24 hours
-    const hasRecentSignal = user.lastSignalTokens.some(
-      (item:any) =>
-        item.token === signal.token && new Date().getTime() - new Date(item.timestamp).getTime() < 24 * 60 * 60 * 1000,
-    )
-
-    if (hasRecentSignal && action === "accept") {
-      return NextResponse.json(
-        {
-          error: "You've already received a signal for this token in the last 24 hours",
-        },
-        { status: 400 },
-      )
-    }
-
     // If action is skip, just return success
     if (action === "skip") {
       return NextResponse.json({ success: true })
     }
 
-    // If action is accept, execute the trade
+    // If action is accept, check if user has exchange connected
     if (action === "accept") {
+      if (!user.exchangeConnected) {
+        return NextResponse.json({ error: "Exchange not connected" }, { status: 400 })
+      }
+
+      // Check if user has already received a signal for this token in the last 24 hours
+      const hasRecentSignal = user.lastSignalTokens.some(
+        (item:any) =>
+          item.token === signal.token &&
+          new Date().getTime() - new Date(item.timestamp).getTime() < 24 * 60 * 60 * 1000,
+      )
+
+      if (hasRecentSignal) {
+        return NextResponse.json(
+          {
+            error: "You've already received a signal for this token in the last 24 hours",
+          },
+          { status: 400 },
+        )
+      }
+
       // Get portfolio
       const portfolio = await models.Portfolio.findOne({ userId: user._id })
 
@@ -69,6 +68,15 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         return NextResponse.json({ error: "Portfolio not found" }, { status: 404 })
       }
 
+      // For SELL signals, verify user has the token
+      if (signal.type === "SELL") {
+        const hasToken = portfolio.holdings.some((h:any) => h.token === signal.token)
+        if (!hasToken) {
+          return NextResponse.json({ error: "You don't own this token" }, { status: 400 })
+        }
+      }
+
+      // Rest of the function remains the same...
       // Initialize exchange service
       const exchangeService = new ExchangeService(user.exchange, {
         apiKey: user.apiKey,
@@ -77,9 +85,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
       // Calculate trade amount (10% of portfolio for BUY)
       let amount = 0
-      let tradeParams: TradeParams = {
+      let tradeParams: { symbol: string; side: "BUY" | "SELL"; quantity: number } = {
         symbol: `${signal.token}USDT`,
-        side: 'BUY',
+        side: "BUY",
         quantity: 0
       }
 
@@ -200,11 +208,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 })
-  } catch (error: unknown) {
+  } catch (error) {
     console.error("Error processing signal action:", error)
 
     // Handle specific API errors
-    if (error instanceof Error && error.message.includes("API")) {
+    if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.includes("API")) {
       return NextResponse.json(
         {
           error: "Exchange API error. Please check your connection and try again.",

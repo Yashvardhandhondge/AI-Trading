@@ -8,6 +8,8 @@ import type { SessionUser } from "@/lib/auth"
 import { formatCurrency } from "@/lib/utils"
 import { SignalCard } from "@/components/signal-card"
 import { CycleCard } from "@/components/cycle-card"
+import { MarketOverview } from "@/components/market-overview"
+import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
 
 interface DashboardProps {
   user: SessionUser
@@ -22,6 +24,10 @@ interface Signal {
   riskLevel: "low" | "medium" | "high"
   createdAt: string
   expiresAt: string
+  link?: string
+  positives?: string[]
+  warnings?: string[]
+  warning_count?: number
 }
 
 interface Cycle {
@@ -42,33 +48,37 @@ export function Dashboard({ user, socket }: DashboardProps) {
   const [activeCycles, setActiveCycles] = useState<Cycle[]>([])
   const [portfolioValue, setPortfolioValue] = useState(0)
   const [pnl, setPnl] = useState({ realized: 0, unrealized: 0 })
+  const [showConnectExchangeModal, setShowConnectExchangeModal] = useState(false)
 
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        // Fetch active signal
+        // Fetch active signal (always fetch signals regardless of exchange connection)
         const signalResponse = await fetch("/api/signals/active")
         if (signalResponse.ok) {
           const signalData = await signalResponse.json()
           setActiveSignal(signalData.signal || null)
         }
 
-        // Fetch active cycles
-        const cyclesResponse = await fetch("/api/cycles/active")
-        if (cyclesResponse.ok) {
-          const cyclesData = await cyclesResponse.json()
-          setActiveCycles(cyclesData.cycles || [])
-        }
+        // Only fetch cycles and portfolio if exchange is connected
+        if (user.exchangeConnected) {
+          // Fetch active cycles
+          const cyclesResponse = await fetch("/api/cycles/active")
+          if (cyclesResponse.ok) {
+            const cyclesData = await cyclesResponse.json()
+            setActiveCycles(cyclesData.cycles || [])
+          }
 
-        // Fetch portfolio summary
-        const portfolioResponse = await fetch("/api/portfolio/summary")
-        if (portfolioResponse.ok) {
-          const portfolioData = await portfolioResponse.json()
-          setPortfolioValue(portfolioData.totalValue || 0)
-          setPnl({
-            realized: portfolioData.realizedPnl || 0,
-            unrealized: portfolioData.unrealizedPnl || 0,
-          })
+          // Fetch portfolio summary
+          const portfolioResponse = await fetch("/api/portfolio/summary")
+          if (portfolioResponse.ok) {
+            const portfolioData = await portfolioResponse.json()
+            setPortfolioValue(portfolioData.totalValue || 0)
+            setPnl({
+              realized: portfolioData.realizedPnl || 0,
+              unrealized: portfolioData.unrealizedPnl || 0,
+            })
+          }
         }
       } catch (error) {
         console.error("Error fetching dashboard data:", error)
@@ -80,31 +90,33 @@ export function Dashboard({ user, socket }: DashboardProps) {
     fetchDashboardData()
 
     // Listen for socket events
-    if (socket && process.env.NODE_ENV !== "development") {
+    if (socket) {
       socket.on("new-signal", (signal: Signal) => {
         setActiveSignal(signal)
       })
-  
-      socket.on("cycle-update", (cycle: Cycle) => {
-        setActiveCycles((prev) => {
-          const exists = prev.some((c) => c.id === cycle.id)
-          if (exists) {
-            return prev.map((c) => (c.id === cycle.id ? cycle : c))
-          } else {
-            return [...prev, cycle]
-          }
+
+      if (user.exchangeConnected) {
+        socket.on("cycle-update", (cycle: Cycle) => {
+          setActiveCycles((prev) => {
+            const exists = prev.some((c) => c.id === cycle.id)
+            if (exists) {
+              return prev.map((c) => (c.id === cycle.id ? cycle : c))
+            } else {
+              return [...prev, cycle]
+            }
+          })
         })
-      })
-  
-      socket.on("portfolio-update", (data: any) => {
-        setPortfolioValue(data.totalValue || 0)
-        setPnl({
-          realized: data.realizedPnl || 0,
-          unrealized: data.unrealizedPnl || 0,
+
+        socket.on("portfolio-update", (data: any) => {
+          setPortfolioValue(data.totalValue || 0)
+          setPnl({
+            realized: data.realizedPnl || 0,
+            unrealized: data.unrealizedPnl || 0,
+          })
         })
-      })
+      }
     }
-  
+
     return () => {
       if (socket) {
         socket.off("new-signal")
@@ -112,10 +124,17 @@ export function Dashboard({ user, socket }: DashboardProps) {
         socket.off("portfolio-update")
       }
     }
-  }, [socket])
+  }, [socket, user.exchangeConnected])
 
   const handleSignalAction = async (action: "accept" | "skip", signalId: string) => {
     try {
+      // If user tries to accept a signal but has no exchange connected, redirect to connect exchange
+      if (action === "accept" && !user.exchangeConnected) {
+        // Show a message that they need to connect an exchange first
+        setShowConnectExchangeModal(true)
+        return
+      }
+
       const response = await fetch(`/api/signals/${signalId}/${action}`, {
         method: "POST",
       })
@@ -179,7 +198,7 @@ export function Dashboard({ user, socket }: DashboardProps) {
       {/* Active Signal */}
       <h2 className="text-xl font-semibold mb-3">Active Signal</h2>
       {activeSignal ? (
-        <SignalCard signal={activeSignal} onAction={handleSignalAction} />
+        <SignalCard signal={activeSignal} onAction={handleSignalAction} exchangeConnected={user.exchangeConnected} />
       ) : (
         <Card className="mb-6">
           <CardContent className="p-6 text-center">
@@ -187,6 +206,10 @@ export function Dashboard({ user, socket }: DashboardProps) {
           </CardContent>
         </Card>
       )}
+
+      {/* Market Overview */}
+      <h2 className="text-xl font-semibold mb-3 mt-6">Market Overview</h2>
+      <MarketOverview exchange={user.exchange || "binance"} />
 
       {/* Active Cycles */}
       <h2 className="text-xl font-semibold mb-3 mt-6">Active Cycles</h2>
@@ -203,6 +226,8 @@ export function Dashboard({ user, socket }: DashboardProps) {
           </CardContent>
         </Card>
       )}
+      {/* Connect Exchange Modal */}
+      <ConnectExchangeModal open={showConnectExchangeModal} onOpenChange={setShowConnectExchangeModal} />
     </div>
   )
 }

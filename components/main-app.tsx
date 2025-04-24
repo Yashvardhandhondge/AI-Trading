@@ -29,19 +29,16 @@ export function MainApp() {
         if (!response.ok) {
           throw new Error("Failed to fetch user data")
         }
-  
+
         const userData = await response.json()
         setUser(userData)
         logger.info("User data fetched successfully", {
           context: "MainApp",
           userId: userData.id,
         })
-  
-        // If exchange is not connected, force the settings tab
-        if (!userData.exchangeConnected) {
-          setActiveTab("settings")
-        }
-  
+
+        // Don't force settings tab, let users see signals even without exchange
+
         // Check if this is the user's first visit
         const hasCompletedOnboarding = localStorage.getItem("onboarding_completed")
         if (!hasCompletedOnboarding) {
@@ -55,41 +52,28 @@ export function MainApp() {
         setIsLoading(false)
       }
     }
-  
+
     fetchUser()
-  
-    // Initialize socket connection - safely
+
+    // Initialize socket connection
     const initSocket = async () => {
       try {
-        if (process.env.NODE_ENV === "development") {
-          // In development, don't even try to initialize the socket server
-          logger.info("Skipping socket initialization in development", { context: "MainApp" });
-        } else {
-          await fetch("/api/socket")
-          logger.info("Socket API initialized", { context: "MainApp" })
-        }
+        await fetch("/api/socket")
+        logger.info("Socket API initialized", { context: "MainApp" })
       } catch (error) {
         logger.error("Error initializing socket API:", error instanceof Error ? error : new Error(String(error)), {
           context: "MainApp",
         })
       }
     }
-  
+
     initSocket()
-  
+
     // Cleanup on unmount
     return () => {
       disconnect()
     }
   }, [router, disconnect])
-  
-  // Connect to socket when user data is available - safely
-  useEffect(() => {
-    if (user) {
-      connect(user.id.toString())
-      logger.info("Socket connected for user", { context: "MainApp", userId: user.id })
-    }
-  }, [user, connect])
 
   // Connect to socket when user data is available
   useEffect(() => {
