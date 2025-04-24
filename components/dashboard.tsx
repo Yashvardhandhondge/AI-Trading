@@ -10,6 +10,8 @@ import { SignalCard } from "@/components/signal-card"
 import { CycleCard } from "@/components/cycle-card"
 import { MarketOverview } from "@/components/market-overview"
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
+import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
+import { logger } from "@/lib/logger"
 
 interface DashboardProps {
   user: SessionUser
@@ -42,6 +44,11 @@ interface Cycle {
   updatedAt: string
 }
 
+interface UserHolding {
+  token: string
+  amount: number
+}
+
 export function Dashboard({ user, socket }: DashboardProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [activeSignal, setActiveSignal] = useState<Signal | null>(null)
@@ -49,6 +56,7 @@ export function Dashboard({ user, socket }: DashboardProps) {
   const [portfolioValue, setPortfolioValue] = useState(0)
   const [pnl, setPnl] = useState({ realized: 0, unrealized: 0 })
   const [showConnectExchangeModal, setShowConnectExchangeModal] = useState(false)
+  const [userHoldings, setUserHoldings] = useState<UserHolding[]>([])
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -58,6 +66,13 @@ export function Dashboard({ user, socket }: DashboardProps) {
         if (signalResponse.ok) {
           const signalData = await signalResponse.json()
           setActiveSignal(signalData.signal || null)
+          
+          if (signalData.signal) {
+            logger.info(`Received signal: ${signalData.signal.type} for ${signalData.signal.token}`, {
+              context: "Dashboard",
+              userId: user.id
+            })
+          }
         }
 
         // Only fetch cycles and portfolio if exchange is connected
@@ -79,9 +94,28 @@ export function Dashboard({ user, socket }: DashboardProps) {
               unrealized: portfolioData.unrealizedPnl || 0,
             })
           }
+          
+          // Fetch user holdings
+          const portfolioFullResponse = await fetch("/api/portfolio")
+          if (portfolioFullResponse.ok) {
+            const portfolioFullData = await portfolioFullResponse.json()
+            if (portfolioFullData.holdings) {
+              const holdings = portfolioFullData.holdings.filter((h: UserHolding) => h.amount > 0)
+              setUserHoldings(holdings)
+              
+              logger.info(`User has ${holdings.length} token holdings`, {
+                context: "Dashboard",
+                userId: user.id,
+                data: { tokens: holdings.map((h: UserHolding) => h.token).join(', ') }
+              })
+            }
+          }
         }
       } catch (error) {
-        console.error("Error fetching dashboard data:", error)
+        logger.error("Error fetching dashboard data:", error instanceof Error ? error : new Error(String(error)), {
+          context: "Dashboard",
+          userId: user.id
+        })
       } finally {
         setIsLoading(false)
       }
@@ -92,7 +126,30 @@ export function Dashboard({ user, socket }: DashboardProps) {
     // Listen for socket events
     if (socket) {
       socket.on("new-signal", (signal: Signal) => {
-        setActiveSignal(signal)
+        logger.info(`Received real-time signal: ${signal.type} for ${signal.token}`, {
+          context: "Dashboard",
+          userId: user.id
+        })
+        
+        // For SELL signals, verify the user owns the token
+        if (signal.type === "SELL") {
+          const hasToken = userHoldings.some(h => h.token === signal.token && h.amount > 0)
+          if (hasToken) {
+            setActiveSignal(signal)
+            logger.info(`Accepting SELL signal for ${signal.token} - user owns this token`, {
+              context: "Dashboard",
+              userId: user.id
+            })
+          } else {
+            logger.info(`Ignoring SELL signal for ${signal.token} - user doesn't own this token`, {
+              context: "Dashboard",
+              userId: user.id
+            })
+          }
+        } else {
+          // Always accept BUY signals
+          setActiveSignal(signal)
+        }
       })
 
       if (user.exchangeConnected) {
@@ -113,6 +170,12 @@ export function Dashboard({ user, socket }: DashboardProps) {
             realized: data.realizedPnl || 0,
             unrealized: data.unrealizedPnl || 0,
           })
+          
+          // Update holdings when portfolio changes
+          if (data.holdings) {
+            const holdings = data.holdings.filter((h: UserHolding) => h.amount > 0)
+            setUserHoldings(holdings)
+          }
         })
       }
     }
@@ -124,7 +187,7 @@ export function Dashboard({ user, socket }: DashboardProps) {
         socket.off("portfolio-update")
       }
     }
-  }, [socket, user.exchangeConnected])
+  }, [socket, user.exchangeConnected, user.id, userHoldings])
 
   const handleSignalAction = async (action: "accept" | "skip", signalId: string) => {
     try {
@@ -134,6 +197,23 @@ export function Dashboard({ user, socket }: DashboardProps) {
         setShowConnectExchangeModal(true)
         return
       }
+      
+      // For SELL signals, verify the user actually owns the token
+      if (activeSignal?.type === "SELL" && action === "accept") {
+        const hasToken = userHoldings.some(h => h.token === activeSignal.token && h.amount > 0)
+        if (!hasToken) {
+          logger.error(`Cannot execute SELL for ${activeSignal.token} - user doesn't own this token`, {
+            context: "Dashboard",
+            userId: user.id
+          })
+          return
+        }
+      }
+
+      logger.info(`Processing ${action} action for ${activeSignal?.type} signal on ${activeSignal?.token}`, {
+        context: "Dashboard",
+        userId: user.id
+      })
 
       const response = await fetch(`/api/signals/${signalId}/${action}`, {
         method: "POST",
@@ -150,7 +230,10 @@ export function Dashboard({ user, socket }: DashboardProps) {
 
       // If accepted, it will be updated via socket
     } catch (error) {
-      console.error("Error handling signal action:", error)
+      logger.error("Error handling signal action:", error instanceof Error ? error : new Error(String(error)), {
+        context: "Dashboard",
+        userId: user.id
+      })
     }
   }
 
@@ -163,9 +246,30 @@ export function Dashboard({ user, socket }: DashboardProps) {
     )
   }
 
+  // For SELL signals, verify the user owns the token before displaying
+  const shouldDisplaySignal = () => {
+    if (!activeSignal) return false
+    
+    if (activeSignal.type === "SELL") {
+      // Only show SELL signals if the user has the token
+      return userHoldings.some(h => h.token === activeSignal.token && h.amount > 0)
+    }
+    
+    // Always show BUY signals
+    return true
+  }
+
+  // Check if user owns the token in the active signal (for SELL signals)
+  const userOwnsToken = activeSignal ? 
+    userHoldings.some(h => h.token === activeSignal.token && h.amount > 0) : 
+    false
+
   return (
     <div className="container mx-auto p-4 pb-20">
       <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
+
+      {/* Exchange Connection Banner - Only show when exchange is not connected */}
+      {!user.exchangeConnected && <ExchangeConnectionBanner />}
 
       {/* Portfolio Summary */}
       <Card className="mb-6">
@@ -197,8 +301,13 @@ export function Dashboard({ user, socket }: DashboardProps) {
 
       {/* Active Signal */}
       <h2 className="text-xl font-semibold mb-3">Active Signal</h2>
-      {activeSignal ? (
-        <SignalCard signal={activeSignal} onAction={handleSignalAction} exchangeConnected={user.exchangeConnected} />
+      {activeSignal && shouldDisplaySignal() ? (
+        <SignalCard 
+          signal={activeSignal} 
+          onAction={handleSignalAction} 
+          exchangeConnected={user.exchangeConnected} 
+          userOwnsToken={userOwnsToken}
+        />
       ) : (
         <Card className="mb-6">
           <CardContent className="p-6 text-center">

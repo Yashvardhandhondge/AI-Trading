@@ -5,7 +5,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle, ExternalLink, Check, X, Info } from "lucide-react"
+import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle, ExternalLink, Check, X, Info, Link2 } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip" 
 
@@ -99,7 +99,17 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
   }
 
   return (
-    <Card className={signal.type === "BUY" ? "border-green-500" : "border-red-500"}>
+    <Card className={`${signal.type === "BUY" ? "border-green-500" : "border-red-500"} relative mb-6`}>
+      {/* Connection Status Badge - Only shown for BUY signals when no exchange is connected */}
+      {signal.type === "BUY" && !exchangeConnected && (
+        <div className="absolute -top-3 right-4 z-10">
+          <Badge variant="destructive" className="flex gap-1 text-xs py-1 px-2 shadow-md">
+            <Link2 className="h-3.5 w-3.5" />
+            Exchange connection required
+          </Badge>
+        </div>
+      )}
+      
       <CardHeader className="pb-2">
         <div className="flex justify-between items-center">
           <CardTitle className="flex items-center">
@@ -198,6 +208,18 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
             {error}
           </div>
         )}
+        
+        {/* Connection requirement notice - show for BUY signals when no exchange is connected */}
+        {signal.type === "BUY" && !exchangeConnected && (
+          <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/30 rounded-md border border-amber-200 dark:border-amber-800">
+            <div className="flex items-start">
+              <Info className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 mr-2 flex-shrink-0" />
+              <p className="text-sm text-amber-800 dark:text-amber-300">
+                You need to connect your exchange to execute trades. Your exchange connection is fully encrypted and secure.
+              </p>
+            </div>
+          </div>
+        )}
       </CardContent>
       <CardFooter className="flex justify-between">
         {signal.type === "BUY" ? (
@@ -207,13 +229,13 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
                 <TooltipTrigger asChild>
                   <div className="flex-1 mr-2">
                     <Button
-                      variant="default"
-                      className="w-full"
+                      variant={exchangeConnected ? "default" : "outline"}
+                      className={`w-full ${!exchangeConnected ? "border-blue-500 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 hover:text-blue-700 flex justify-center" : ""}`}
                       onClick={() => handleAction("accept")}
                       disabled={isLoading}
                     >
                       {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                      {exchangeConnected ? "Buy 10%" : "Connect to Buy"}
+                      {exchangeConnected ? "Buy 10%" : "Connect Exchange"}
                     </Button>
                   </div>
                 </TooltipTrigger>
