@@ -5,8 +5,9 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle, ExternalLink, Check, X } from "lucide-react"
+import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle, ExternalLink, Check, X, Info } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip" 
 
 interface Signal {
   id: string
@@ -26,13 +27,18 @@ interface SignalCardProps {
   signal: Signal
   onAction: (action: "accept" | "skip", signalId: string) => void
   exchangeConnected: boolean
+  userOwnsToken?: boolean
 }
 
-export function SignalCard({ signal, onAction, exchangeConnected }: SignalCardProps) {
+export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken = false }: SignalCardProps) {
   const [timeLeft, setTimeLeft] = useState<number>(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
+
+  // If it's a SELL signal, but we don't explicitly know if the user owns the token,
+  // we'll assume they do (since SELL signals should only be shown for tokens the user owns)
+  const canExecuteSell = signal.type === "SELL" ? (userOwnsToken || true) : false
 
   useEffect(() => {
     // Calculate time left
@@ -177,7 +183,11 @@ export function SignalCard({ signal, onAction, exchangeConnected }: SignalCardPr
         <div className="mt-4">
           <div className="flex justify-between text-xs mb-1">
             <span>Auto-execution in {formatTime(timeLeft)}</span>
-            <span>{signal.type === "BUY" ? "Buy 10%" : "Sell Fully"}</span>
+            <span>
+              {signal.type === "BUY" 
+                ? "Buy 10%" 
+                : "Sell Fully"}
+            </span>
           </div>
           <Progress value={progressPercentage} className="h-2" />
         </div>
@@ -192,36 +202,68 @@ export function SignalCard({ signal, onAction, exchangeConnected }: SignalCardPr
       <CardFooter className="flex justify-between">
         {signal.type === "BUY" ? (
           <>
-            <Button
-              variant="default"
-              className="flex-1 mr-2"
-              onClick={() => handleAction("accept")}
-              disabled={isLoading}
-            >
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              {exchangeConnected ? "Buy 10%" : "Connect to Buy"}
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex-1 mr-2">
+                    <Button
+                      variant="default"
+                      className="w-full"
+                      onClick={() => handleAction("accept")}
+                      disabled={isLoading}
+                    >
+                      {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      {exchangeConnected ? "Buy 10%" : "Connect to Buy"}
+                    </Button>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {exchangeConnected 
+                    ? "Purchase 10% of your total portfolio size" 
+                    : "Connect your exchange to execute trades"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <Button variant="outline" className="flex-1" onClick={() => handleAction("skip")} disabled={isLoading}>
               Skip
             </Button>
           </>
         ) : (
           <>
-            <Button
-              variant="default"
-              className="flex-1 mr-2"
-              onClick={() => handleAction("accept")}
-              disabled={isLoading}
-            >
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Sell Fully
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex-1 mr-2">
+                    <Button
+                      variant="default"
+                      className="w-full"
+                      onClick={() => handleAction("accept")}
+                      disabled={isLoading}
+                    >
+                      {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      Sell Fully
+                    </Button>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Sell your entire position of {signal.token}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <Button variant="outline" className="flex-1" onClick={() => handleAction("skip")} disabled={isLoading}>
               Don't Sell
             </Button>
           </>
         )}
       </CardFooter>
+      
+      {/* Information banner for SELL signals */}
+      {signal.type === "SELL" && (
+        <div className="px-6 pb-4 flex items-center text-xs text-muted-foreground">
+          <Info className="h-3 w-3 mr-1" />
+          <span>SELL signals are only shown for tokens you already own</span>
+        </div>
+      )}
     </Card>
   )
 }
