@@ -177,65 +177,63 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
           </div>
         )}
 
-        {/* Auto-execution timer with clear messaging */}
-        <div className="mt-4 relative">
-          <div className="flex justify-between text-xs mb-1">
-            <span className="font-medium">Auto-execution in {formatTime(timeLeft)}</span>
-            <span className="font-medium">
-              {signal.type === "BUY" 
-                ? "Will buy 10%" 
-                : "Will sell fully"}
-            </span>
-          </div>
-          <Progress value={progressPercentage} className={`h-2 ${isTimeRunningOut ? "bg-red-200" : ""}`} />
-          
-          {/* Auto-execution messaging */}
-          <div className={`mt-3 p-3 rounded-md ${isTimeRunningOut ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" : "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"}`}>
-            <div className="flex items-start">
-              {isTimeRunningOut ? (
-                <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 mr-2 flex-shrink-0 animate-pulse" />
-              ) : (
-                <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 mr-2 flex-shrink-0" />
-              )}
-              <div>
-                <p className={`text-sm font-medium ${isTimeRunningOut ? "text-red-800 dark:text-red-300" : "text-amber-800 dark:text-amber-300"}`}>
-                  {isTimeRunningOut ? "Auto-execution imminent!" : "Auto-execution will occur when timer expires"}
-                </p>
-                <p className={`text-xs mt-1 ${isTimeRunningOut ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400"}`}>
-                  {exchangeConnected ? (
-                    signal.type === "BUY" 
+        {/* Auto-execution timer - Only show if exchange is connected */}
+        {exchangeConnected && (
+          <div className="mt-4 relative">
+            <div className="flex justify-between text-xs mb-1">
+              <span className="font-medium">Auto-execution in {formatTime(timeLeft)}</span>
+              <span className="font-medium">
+                {signal.type === "BUY" 
+                  ? "Will buy 10%" 
+                  : "Will sell fully"}
+              </span>
+            </div>
+            <Progress value={progressPercentage} className={`h-2 ${isTimeRunningOut ? "bg-red-200" : ""}`} />
+            
+            {/* Auto-execution messaging */}
+            <div className={`mt-3 p-3 rounded-md ${isTimeRunningOut ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" : "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"}`}>
+              <div className="flex items-start">
+                {isTimeRunningOut ? (
+                  <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 mr-2 flex-shrink-0 animate-pulse" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 mr-2 flex-shrink-0" />
+                )}
+                <div>
+                  <p className={`text-sm font-medium ${isTimeRunningOut ? "text-red-800 dark:text-red-300" : "text-amber-800 dark:text-amber-300"}`}>
+                    {isTimeRunningOut ? "Auto-execution imminent!" : "Auto-execution will occur when timer expires"}
+                  </p>
+                  <p className={`text-xs mt-1 ${isTimeRunningOut ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400"}`}>
+                    {signal.type === "BUY" 
                       ? `If you don't take action, the system will automatically buy ${signal.token} worth 10% of your portfolio.`
-                      : `If you don't take action, the system will automatically sell all your ${signal.token} holdings.`
-                  ) : (
-                    `Connect your exchange to enable automatic trading.`
-                  )}
-                </p>
+                      : `If you don't take action, the system will automatically sell all your ${signal.token} holdings.`}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
-        {error && (
-          <div className="mt-2 text-sm text-destructive flex items-center">
-            <AlertTriangle className="h-4 w-4 mr-1" />
-            {error}
-          </div>
         )}
-        
-        {/* Connection requirement notice - show for BUY signals when no exchange is connected */}
+
+        {/* Information banner when no exchange is connected */}
         {!exchangeConnected && (
           <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/30 rounded-md border border-blue-200 dark:border-blue-800">
             <div className="flex items-start">
               <Info className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 mr-2 flex-shrink-0" />
               <div>
                 <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
-                  Exchange connection required
+                  Exchange connection required to execute trades
                 </p>
                 <p className="text-xs mt-1 text-blue-700 dark:text-blue-400">
-                  You need to connect either Binance or BTCC to execute trades. Your API keys are securely encrypted.
+                  Connect your exchange to execute trades based on this signal. Your API keys will be securely encrypted.
                 </p>
               </div>
             </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-2 text-sm text-destructive flex items-center">
+            <AlertTriangle className="h-4 w-4 mr-1" />
+            {error}
           </div>
         )}
       </CardContent>

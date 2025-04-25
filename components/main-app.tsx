@@ -37,8 +37,6 @@ export function MainApp() {
           userId: userData.id,
         })
 
-        // Don't force settings tab, let users see signals even without exchange
-
         // Check if this is the user's first visit
         const hasCompletedOnboarding = localStorage.getItem("onboarding_completed")
         if (!hasCompletedOnboarding) {
@@ -104,16 +102,7 @@ export function MainApp() {
     return null // Or a more detailed error state
   }
 
-  // If exchange is not connected, show the exchange setup screen
-  if (!user.exchangeConnected) {
-    return (
-      <>
-        <ExchangeSetup user={user} onComplete={() => setActiveTab("dashboard")} />
-        {showOnboarding && <OnboardingTutorial onComplete={handleOnboardingComplete} />}
-      </>
-    )
-  }
-
+  // Show the main app UI regardless of exchange connection status
   return (
     <>
       <div className="telegram-app">
@@ -128,7 +117,11 @@ export function MainApp() {
             <Leaderboard />
           </TabsContent>
           <TabsContent value="settings" className="flex-1 p-0">
-            <Settings user={user} />
+            {!user.exchangeConnected && activeTab === "settings" ? (
+              <ExchangeSetup user={user} onComplete={() => router.refresh()} />
+            ) : (
+              <Settings user={user} />
+            )}
           </TabsContent>
 
           <TabsList className="grid grid-cols-4 h-16 fixed bottom-0 left-0 right-0 rounded-none border-t">
