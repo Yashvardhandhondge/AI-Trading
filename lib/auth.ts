@@ -102,13 +102,24 @@ export async function verifySessionToken(token: string): Promise<SessionUser | n
   }
 }
 
+// In your auth.ts file, modify getSessionUser()
 export async function getSessionUser(): Promise<SessionUser | null> {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("session_token")?.value
-
-  if (!token) return null
-
-  return verifySessionToken(token)
+  const cookieStore = await cookies();
+  const token = cookieStore.get("session_token")?.value;
+  
+  if (!token) {
+    console.log("No session token found in cookies");
+    return null;
+  }
+  
+  try {
+    const user = await verifySessionToken(token);
+    console.log("Session user verified:", user?.id);
+    return user;
+  } catch (error) {
+    console.error("Token verification failed:", error);
+    return null;
+  }
 }
 
 export function setSessionCookie(token: string, response: NextResponse): NextResponse {
