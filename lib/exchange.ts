@@ -1,6 +1,7 @@
 import axios from "axios"
 import crypto from "crypto"
 import { decryptApiKey } from "./db"
+import { logger } from "./logger"
 
 const API_SECRET_KEY = process.env.API_SECRET_KEY || "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
@@ -72,6 +73,11 @@ export class ExchangeService {
 
     // Set base URL based on exchange
     this.baseUrl = exchange === "binance" ? "https://api.binance.com" : "https://api.btcc.com"
+    
+    logger.info(`ExchangeService initialized for ${exchange}`, {
+      context: "ExchangeService",
+      data: { baseUrl: this.baseUrl }
+    })
   }
 
   private generateSignature(queryString: string): string {
@@ -90,49 +96,108 @@ export class ExchangeService {
 
       // Generate query string
       const queryString = Object.entries(params)
-        .map(([key, value]) => `${key}=${value}`)
+        .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
         .join("&")
 
       // Generate signature
       const signature = this.generateSignature(queryString)
 
-      // Build URL
+      // Build URL with query string and signature
       const url = `${this.baseUrl}${endpoint}?${queryString}&signature=${signature}`
+      
+      logger.debug(`Making ${method} request to ${this.exchange}`, { 
+        context: "ExchangeService",
+        data: { 
+          endpoint,
+          method,
+          // Don't log full URL to avoid exposing signature in logs
+          baseUrl: this.baseUrl,
+          paramsCount: Object.keys(params).length
+        }
+      })
 
-      // Make request
+      // Make request with proper headers
       const response = await axios({
         method,
         url,
         headers: {
           "X-MBX-APIKEY": this.apiKey,
+          "User-Agent": "Mozilla/5.0" // Add User-Agent header like in Postman
         },
+        timeout: 10000 // Add timeout to prevent hanging requests
       })
 
+      logger.debug(`Request to ${this.exchange} successful`, {
+        context: "ExchangeService"
+      })
+      
       return response.data
     } catch (error) {
-      console.error(`Exchange API error:`, error)
-
-      // Handle API errors
-      if (axios.isAxiosError(error) && error.response) {
-        throw new Error(`Exchange API error: ${error.response.data.msg || error.message}`)
+      // Detailed error logging
+      if (axios.isAxiosError(error)) {
+        logger.error(`Exchange API error: ${this.exchange}`)
+        
+        // Throw detailed error with response data if available
+        if (error.response) {
+          throw new Error(`Exchange API error (${error.response.status}): ${JSON.stringify(error.response.data)}`)
+        }
       }
 
+      logger.error(`Exchange request failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       throw error
     }
   }
 
   async validateConnection(): Promise<boolean> {
     try {
+      logger.info(`Validating connection to ${this.exchange}`, {
+        context: "ExchangeService"
+      })
+      
       if (this.exchange === "binance") {
-        // Test Binance API connection
-        await this.makeRequest("/api/v3/account")
+        // Test Binance API connection - use a simpler endpoint first
+        try {
+          // Try ping endpoint first as a simple connectivity test
+          await axios({
+            method: "GET",
+            url: `${this.baseUrl}/api/v3/ping`,
+            headers: {
+              "X-MBX-APIKEY": this.apiKey,
+              "User-Agent": "Mozilla/5.0"
+            },
+            timeout: 5000
+          })
+          
+          logger.info("Binance ping successful, testing account access", {
+            context: "ExchangeService"
+          })
+          
+          // Then test actual account access
+          await this.makeRequest("/api/v3/account")
+          
+          logger.info("Binance API connection validated successfully", {
+            context: "ExchangeService"
+          })
+          return true
+        } catch (error) {
+          logger.error(`Failed to validate Binance connection: ${error instanceof Error ? error.message : 'Unknown error'}`)
+          return false
+        }
       } else {
         // Test BTCC API connection
-        await this.makeRequest("/api/v1/account")
+        try {
+          await this.makeRequest("/api/v1/account")
+          logger.info("BTCC API connection validated successfully", {
+            context: "ExchangeService"
+          })
+          return true
+        } catch (error) {
+          logger.error(`Failed to validate BTCC connection: ${error instanceof Error ? error.message : 'Unknown error'}`)
+          return false
+        }
       }
-      return true
     } catch (error) {
-      console.error(`Failed to connect to ${this.exchange}:`, error)
+      logger.error(`Failed to connect to ${this.exchange}: ${error instanceof Error ? error.message : 'Unknown error'}`)
       return false
     }
   }
@@ -162,7 +227,7 @@ export class ExchangeService {
         }))
       }
     } catch (error) {
-      console.error(`Error fetching balances:`, error)
+      logger.error(`Error fetching balances: ${error instanceof Error ? error.message : 'Unknown error'}`)
       throw error
     }
   }
@@ -215,7 +280,7 @@ export class ExchangeService {
         holdings,
       }
     } catch (error) {
-      console.error(`Error fetching portfolio:`, error)
+      logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : 'Unknown error'}`)
       throw error
     }
   }
@@ -248,12 +313,12 @@ export class ExchangeService {
         symbol: response.symbol,
         side: response.side,
         quantity: Number.parseFloat(response.executedQty),
-        price: Number.parseFloat(response.price || response.fills[0].price),
+        price: Number.parseFloat(response.price || response.fills?.[0]?.price || 0),
         status: response.status,
         timestamp: response.transactTime,
       }
     } catch (error) {
-      console.error(`Error executing trade:`, error)
+      logger.error(`Error executing trade: ${error instanceof Error ? error.message : 'Unknown error'}`)
       throw error
     }
   }
@@ -272,7 +337,7 @@ export class ExchangeService {
       const response = await this.makeRequest(endpoint, "GET", params)
       return Number.parseFloat(response.price)
     } catch (error) {
-      console.error(`Error fetching market price:`, error)
+      logger.error(`Error fetching market price: ${error instanceof Error ? error.message : 'Unknown error'}`)
 
       // Fallback to CoinGecko API if exchange API fails
       try {
@@ -280,7 +345,7 @@ export class ExchangeService {
         const response = await axios.get(`https://api.coingecko.com/api/v3/simple/price?ids=${token}&vs_currencies=usd`)
         return response.data[token].usd
       } catch (fallbackError) {
-        console.error(`Fallback price fetch failed:`, fallbackError)
+        logger.error(`Fallback price fetch failed: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`)
         throw error
       }
     }
