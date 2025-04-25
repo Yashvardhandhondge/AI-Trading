@@ -45,11 +45,11 @@ export async function POST(request: NextRequest) {
     try {
       const exchangeService = new ExchangeService(exchange, { apiKey, apiSecret })
       const isValid = await exchangeService.validateConnection()
-
+    
       if (!isValid) {
         logger.error(`Failed to validate ${exchange} connection`)
         return NextResponse.json({ 
-          error: "Invalid API credentials or connection error. Please check your API key, secret, and IP whitelist settings." 
+          error: "IP restriction detected. Please whitelist Vercel's IP range (76.76.21.0/24) in your Binance API settings." 
         }, { status: 400 })
       }
 
