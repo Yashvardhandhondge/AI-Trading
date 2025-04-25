@@ -10,7 +10,7 @@ import { CycleCard } from "@/components/cycle-card"
 import { MarketOverview } from "@/components/market-overview"
 import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
 import { logger } from "@/lib/logger"
-import SignalDashboard from "@/components/signal-dashboard" // Import the new component
+import SignalDashboard from "./signal-dashboard"
 
 interface DashboardProps {
   user: SessionUser
