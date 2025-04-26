@@ -1,8 +1,9 @@
-// route.ts - /api/exchange/connect
+// app/api/exchange/connect/route.ts
 import { type NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { connectToDatabase, models, encryptApiKey } from "@/lib/db";
 import { ExchangeService } from "@/lib/exchange";
+import { TelegramExchangeService } from "@/lib/exchange-telegram";
 import { logger } from "@/lib/logger";
 
 const API_SECRET_KEY = process.env.API_SECRET_KEY || "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { exchange, apiKey, apiSecret } = await request.json();
+    const { exchange, apiKey, apiSecret, isTelegramWebApp } = await request.json();
 
     if (!exchange || !["binance", "btcc"].includes(exchange)) {
       return NextResponse.json({ error: "Invalid exchange" }, { status: 400 });
@@ -25,11 +26,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "API key and secret are required" }, { status: 400 });
     }
 
-    // Log connection attempt (without sensitive data)
+    // Get client IP and user agent
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0] || 
+                   request.headers.get('x-real-ip') || 
+                   "unknown";
+    const userAgent = request.headers.get('user-agent') || "unknown";
+    
+    // Log connection attempt
     logger.info(`Attempting to connect to ${exchange}`, {
       context: "ExchangeConnect",
       userId: sessionUser.id,
-      data: { exchange }
+      data: { 
+        exchange,
+        clientIp,
+        isTelegram: !!isTelegramWebApp,
+        // Indicate if this is likely a Telegram WebApp based on user agent
+        detectedTelegram: userAgent.includes("Telegram") || userAgent.includes("TelegramBot")
+      }
     });
 
     // Connect to database first
@@ -42,33 +55,69 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Validate exchange connection with enhanced error handling
-    try {
-      // Create exchange service with client IP logging
-      const userIP = request.headers.get('x-forwarded-for')?.split(',')[0] || 
-                    request.headers.get('x-real-ip') || 
-                    "unknown";
-      
-      logger.info(`Connection attempt from IP: ${userIP}`, {
-        context: "ExchangeConnect",
-        userId: sessionUser.id
-      });
-      
-      const exchangeService = new ExchangeService(exchange, { apiKey, apiSecret });
-      const isValid = await exchangeService.validateConnection();
+    // Detect if this is a Telegram WebApp request
+    const isTelegram = isTelegramWebApp || 
+                     userAgent.includes("Telegram") || 
+                     userAgent.includes("TelegramBot");
     
+    // Choose the appropriate service based on environment
+    let isValid = false;
+    let portfolioData = null;
+    
+    // Validate exchange connection using the appropriate service
+    try {
+      if (isTelegram) {
+        logger.info("Using Telegram-compatible exchange service for connection", {
+          context: "ExchangeConnect",
+          userId: sessionUser.id
+        });
+        
+        // Use the Telegram-specific service that uses the server-side proxy
+        const telegramExchangeService = new TelegramExchangeService(exchange, { apiKey, apiSecret });
+        isValid = await telegramExchangeService.validateConnection();
+        
+        if (isValid) {
+          // Get portfolio data while we have a valid connection
+          portfolioData = await telegramExchangeService.getPortfolio();
+        }
+      } else {
+        logger.info("Using standard exchange service for connection", {
+          context: "ExchangeConnect", 
+          userId: sessionUser.id
+        });
+        
+        // Use the standard service for direct browser connections
+        const exchangeService = new ExchangeService(exchange, { apiKey, apiSecret });
+        isValid = await exchangeService.validateConnection();
+        
+        if (isValid) {
+          // Get portfolio data while we have a valid connection
+          portfolioData = await exchangeService.getPortfolio();
+        }
+      }
+      
       if (!isValid) {
         logger.error(`Failed to validate ${exchange} connection`);
-        return NextResponse.json({ 
-          error: `Connection validation failed. Please ensure Vercel's IP range (76.76.21.0/24) and your IP (${userIP}) are whitelisted in your exchange settings.`,
-          code: "VALIDATION_FAILED" 
-        }, { status: 400 });
+        
+        // Special message for Telegram users
+        if (isTelegram) {
+          return NextResponse.json({ 
+            error: "Connection validation failed. Please ensure your API key has trading permissions enabled.",
+            code: "VALIDATION_FAILED" 
+          }, { status: 400 });
+        } else {
+          return NextResponse.json({ 
+            error: `Connection validation failed. Please ensure Vercel's IP range (76.76.21.0/24) and your IP (${clientIp}) are whitelisted in your exchange settings.`,
+            code: "VALIDATION_FAILED" 
+          }, { status: 400 });
+        }
       }
 
       // Connection successful, encrypt and store credentials
       logger.info(`Successfully connected to ${exchange}`, {
         context: "ExchangeConnect",
-        userId: sessionUser.id
+        userId: sessionUser.id,
+        data: { isTelegram }
       });
 
       // Encrypt API credentials
@@ -85,40 +134,38 @@ export async function POST(request: NextRequest) {
 
       // Initialize portfolio
       try {
-        const portfolio = await models.Portfolio.findOne({ userId: user._id });
-        
-        if (!portfolio) {
-          // Fetch initial portfolio data
-          const portfolioData = await exchangeService.getPortfolio();
+        if (portfolioData) {
+          const portfolio = await models.Portfolio.findOne({ userId: user._id });
           
-          await models.Portfolio.create({
-            userId: user._id,
-            totalValue: portfolioData.totalValue,
-            freeCapital: portfolioData.freeCapital,
-            allocatedCapital: portfolioData.allocatedCapital,
-            holdings: portfolioData.holdings,
-            updatedAt: new Date(),
-          });
-          
-          logger.info("Created new portfolio for user", {
-            context: "ExchangeConnect",
-            userId: sessionUser.id
-          });
-        } else {
-          // Update existing portfolio
-          const portfolioData = await exchangeService.getPortfolio();
-          
-          portfolio.totalValue = portfolioData.totalValue;
-          portfolio.freeCapital = portfolioData.freeCapital;
-          portfolio.allocatedCapital = portfolioData.allocatedCapital;
-          portfolio.holdings = portfolioData.holdings;
-          portfolio.updatedAt = new Date();
-          await portfolio.save();
-          
-          logger.info("Updated existing portfolio for user", {
-            context: "ExchangeConnect",
-            userId: sessionUser.id
-          });
+          if (!portfolio) {
+            // Create new portfolio
+            await models.Portfolio.create({
+              userId: user._id,
+              totalValue: portfolioData.totalValue,
+              freeCapital: portfolioData.freeCapital,
+              allocatedCapital: portfolioData.allocatedCapital,
+              holdings: portfolioData.holdings,
+              updatedAt: new Date(),
+            });
+            
+            logger.info("Created new portfolio for user", {
+              context: "ExchangeConnect",
+              userId: sessionUser.id
+            });
+          } else {
+            // Update existing portfolio
+            portfolio.totalValue = portfolioData.totalValue;
+            portfolio.freeCapital = portfolioData.freeCapital;
+            portfolio.allocatedCapital = portfolioData.allocatedCapital;
+            portfolio.holdings = portfolioData.holdings;
+            portfolio.updatedAt = new Date();
+            await portfolio.save();
+            
+            logger.info("Updated existing portfolio for user", {
+              context: "ExchangeConnect",
+              userId: sessionUser.id
+            });
+          }
         }
       } catch (portfolioError) {
         // Log portfolio error but continue with the connection process
@@ -142,7 +189,9 @@ export async function POST(request: NextRequest) {
         const errorString = error.message.toLowerCase();
         
         if (errorString.includes("ip restricted") || errorString.includes("whitelist")) {
-          errorMessage = "IP restriction detected. Please add Vercel's IP range (76.76.21.0/24) to your exchange API settings.";
+          errorMessage = isTelegram 
+            ? "IP restriction detected. Please try again - our system is using a special connection method for Telegram."
+            : `IP restriction detected. Please whitelist Vercel's IP range (76.76.21.0/24) and your IP (${clientIp}) in your exchange settings.`;
           errorCode = "IP_RESTRICTED";
         } else if (errorString.includes("key") || errorString.includes("signature") || 
                   errorString.includes("authentication failed") || errorString.includes("invalid api")) {
@@ -154,12 +203,6 @@ export async function POST(request: NextRequest) {
         } else if (errorString.includes("timeout") || errorString.includes("timed out")) {
           errorMessage = "Connection timed out. Please try again later.";
           errorCode = "CONNECTION_TIMEOUT";
-        } else if (errorString.includes("banned") || errorString.includes("banned")) {
-          errorMessage = "Your IP has been temporarily banned by the exchange. Please try again later.";
-          errorCode = "IP_BANNED";
-        } else if (errorString.includes("rate limit")) {
-          errorMessage = "Rate limit exceeded. Please try again in a few minutes.";
-          errorCode = "RATE_LIMIT_EXCEEDED";
         }
       }
       
