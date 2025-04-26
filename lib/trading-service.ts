@@ -10,7 +10,7 @@ import { logger } from "./logger";
 
 export class ProxyTradingService {
   // URL of the proxy server - configure in your environment variables
-  static PROXY_URL = process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://positions-embedded-capable-taxation.trycloudflare.com';
+  static PROXY_URL = process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://remedies-postal-travel-bailey.trycloudflare.com';
   
   /**
    * Makes a request to the Binance API through the proxy server

@@ -31,7 +31,7 @@ export function Settings({ user }: SettingsProps) {
     // Check if proxy server is available
     const checkProxyServer = async () => {
       try {
-        const response = await fetch('https://positions-embedded-capable-taxation.trycloudflare.com/health', { 
+        const response = await fetch('https://remedies-postal-travel-bailey.trycloudflare.com/health', { 
           signal: AbortSignal.timeout(2000) // 2 second timeout
         });
         setProxyServerAvailable(response.ok);
@@ -58,7 +58,7 @@ export function Settings({ user }: SettingsProps) {
       if (apiKey && apiSecret) {
         try {
           // Send credentials directly to the proxy backend server
-          const backendResponse = await fetch('https://positions-embedded-capable-taxation.trycloudflare.com/api/register-key', {
+          const backendResponse = await fetch('https://remedies-postal-travel-bailey.trycloudflare.com/api/register-key', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

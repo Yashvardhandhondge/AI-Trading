@@ -28,7 +28,7 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
   const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
-  const [proxyServerUrl, setProxyServerUrl] = useState('https://positions-embedded-capable-taxation.trycloudflare.com')
+  const [proxyServerUrl, setProxyServerUrl] = useState('https://remedies-postal-travel-bailey.trycloudflare.com')
   
   // Check if proxy server is available
   useEffect(() => {
@@ -50,7 +50,7 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
         setProxyServerAvailable(available);
         console.log(`Proxy server check at ${proxyServerUrl}: ${available ? "Available" : "Unavailable"}`);
         
-        if (!available && proxyServerUrl === 'https://positions-embedded-capable-taxation.trycloudflare.com') {
+        if (!available && proxyServerUrl === 'https://remedies-postal-travel-bailey.trycloudflare.com') {
           // If localhost failed, try public domain if configured
           const publicUrl = process.env.NEXT_PUBLIC_PROXY_PUBLIC_URL;
           if (publicUrl) {
