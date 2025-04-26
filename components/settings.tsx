@@ -58,19 +58,32 @@ export function Settings({ user }: SettingsProps) {
       if (apiKey && apiSecret) {
         try {
           // Send credentials directly to the proxy backend server
-          const backendResponse = await fetch('https://13.60.210.111/api/register-key', {
+          // const backendResponse = await fetch('https://13.60.210.111/api/register-key', {
+          //   method: 'POST',
+          //   headers: {
+          //     'Content-Type': 'application/json',
+          //     'Origin': window.location.origin
+          //   },
+          //   body: JSON.stringify({
+          //     userId: effectiveUserId,
+          //     apiKey,
+          //     apiSecret,
+          //     exchange: exchange
+          //   }),
+          //   mode: 'cors'
+          // });
+          
+          const backendResponse = await fetch('/api/proxy/register-key', {
             method: 'POST',
             headers: {
-              'Content-Type': 'application/json',
-              'Origin': window.location.origin
+              'Content-Type': 'application/json'
             },
             body: JSON.stringify({
               userId: effectiveUserId,
               apiKey,
               apiSecret,
               exchange: exchange
-            }),
-            mode: 'cors'
+            })
           });
           
           // Check for backend errors

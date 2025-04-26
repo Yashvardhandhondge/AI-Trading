@@ -80,7 +80,7 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
       }
       
       // Send credentials directly to your backend server
-      const backendResponse = await fetch('https://13.60.210.111/api/register-key', {
+      const backendResponse = await fetch('/api/proxy/register-key', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -92,6 +92,7 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
           exchange: exchange
         })
       });
+      
       
       // Check for backend errors
       if (!backendResponse.ok) {
