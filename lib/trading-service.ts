@@ -12,6 +12,45 @@ export class TradingService {
   /**
    * Get account information from Binance
    */
+
+  static PROXY_URL = "http://localhost:3000/"
+
+    /**
+   * Make a request through the proxy
+   */
+    private static async makeProxyRequest(
+      endpoint: string,
+      method: "GET" | "POST" = "GET",
+      params: Record<string, any> = {}
+    ) {
+      const userId = localStorage.getItem('userId') || 'default-user-id';
+      try {
+        const response = await fetch(`${this.PROXY_URL}/api/proxy/binance`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userId,
+            endpoint,
+            method,
+            params
+          })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || `Error ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        return data.data;
+      } catch (error) {
+        console.error(`Proxy request failed: ${error.message}`);
+        throw error;
+      }
+    }
+
   static async getAccountInfo() {
     return this.makeProxyRequest("/api/v3/account");
   }
@@ -141,39 +180,7 @@ export class TradingService {
     }
   }
   
-  /**
-   * Make a request through the proxy
-   */
-  private static async makeProxyRequest(
-    endpoint: string,
-    method: "GET" | "POST" = "GET",
-    params: Record<string, any> = {}
-  ) {
-    try {
-      const response = await fetch("/api/trading/proxy", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          endpoint,
-          method,
-          params
-        })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || `Error ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      return data.data;
-    } catch (error) {
-      logger.error(`Proxy request failed: ${error instanceof Error ? error.message : "Unknown error"}`);
-      throw error;
-    }
-  }
+
   
   /**
    * Create a test order to validate API permissions
@@ -209,15 +216,15 @@ export class TradingService {
   /**
    * Cancel an order
    */
-  static async cancelOrder(symbol: string, orderId: number) {
-    try {
-      return await this.makeProxyRequest("/api/v3/order", "DELETE", {
-        symbol,
-        orderId
-      });
-    } catch (error) {
-      logger.error(`Error canceling order: ${error instanceof Error ? error.message : "Unknown error"}`);
-      throw error;
-    }
-  }
+  // static async cancelOrder(symbol: string, orderId: number) {
+  //   try {
+  //     return await this.makeProxyRequest("/api/v3/order", "DELETE", {
+  //       symbol,
+  //       orderId
+  //     });
+  //   } catch (error) {
+  //     logger.error(`Error canceling order: ${error instanceof Error ? error.message : "Unknown error"}`);
+  //     throw error;
+  //   }
+  // }
 }

@@ -24,6 +24,7 @@ import {
 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { logger } from "@/lib/logger"
+import { TradingService } from "@/lib/trading-service"
 
 interface ConnectExchangeModalProps {
   open: boolean
@@ -54,10 +55,15 @@ export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModa
     setShowSuccess(false)
     
     try {
-      const response = await fetch("/api/exchange/connect", {
+      // Store user ID in localStorage for the trading service to use
+      localStorage.setItem('userId', 'current-user-id') // Replace with actual user ID if available
+      
+      // First, register the API keys with the proxy server
+      const response = await fetch(`${TradingService.PROXY_URL}/api/register-key`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          // Add authentication if needed
         },
         body: JSON.stringify({
           exchange,
@@ -74,6 +80,13 @@ export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModa
         })
         
         throw new Error(data.error || "Failed to connect exchange")
+      }
+      
+      // Test the connection with the trading service
+      const isConnected = await TradingService.testConnection()
+      
+      if (!isConnected) {
+        throw new Error("Failed to connect to exchange API")
       }
       
       logger.info("Exchange connected successfully", {
