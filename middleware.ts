@@ -1,3 +1,4 @@
+// middleware.ts
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { logger } from "@/lib/logger"
@@ -25,29 +26,70 @@ export async function middleware(request: NextRequest) {
 
   // Add security headers
   response.headers.set("X-Content-Type-Options", "nosniff")
-  response.headers.set("X-Frame-Options", "DENY")
   response.headers.set("X-XSS-Protection", "1; mode=block")
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin")
+  
+  // Improve CORS handling for Telegram WebApp
+  if (request.headers.get("origin")) {
+    // Allow Telegram and our own origins
+    const allowedOrigins = [
+      'https://telegram.org', 
+      'https://web.telegram.org', 
+      'https://t.me',
+      process.env.NEXT_PUBLIC_APP_URL || ''
+    ];
+    
+    const origin = request.headers.get("origin") || '';
+    
+    if (allowedOrigins.some(allowed => origin.includes(allowed)) || 
+        // Also allow Telegram WebApp origins which can be dynamic
+        origin.includes('telegram') || 
+        origin.includes('t.me')) {
+      response.headers.set("Access-Control-Allow-Origin", origin);
+      response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      response.headers.set("Access-Control-Allow-Credentials", "true");
+    }
+  }
+  
+  // Special treatment for IP detection endpoints and OPTIONS requests
+  if (request.nextUrl.pathname.includes('/api/ip') || request.method === 'OPTIONS') {
+    // Allow any origin for IP detection API
+    response.headers.set("Access-Control-Allow-Origin", "*");
+    response.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+    response.headers.set("Access-Control-Allow-Headers", "Content-Type");
+    
+    // Respond directly to OPTIONS requests
+    if (request.method === 'OPTIONS') {
+      return new NextResponse(null, { 
+        status: 204,
+        headers: response.headers
+      });
+    }
+  }
 
   // Customize Content Security Policy based on environment
   if (process.env.NODE_ENV === 'development') {
     // More permissive CSP for development
     response.headers.set(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org; connect-src 'self' wss: https://*; img-src 'self' data: https://*; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors https://telegram.org;"
+      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org https://*.telegram.org; connect-src 'self' wss: https://* http://localhost:*; img-src 'self' data: https://*; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors https://telegram.org https://*.telegram.org https://t.me;"
     )
   } else {
     // Stricter CSP for production
     response.headers.set(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self' 'unsafe-inline' https://telegram.org; connect-src 'self' wss: https://api.binance.com https://api.btcc.com; img-src 'self' data: https://telegram.org; style-src 'self' 'unsafe-inline'; font-src 'self'; frame-ancestors https://telegram.org;"
+      "default-src 'self'; script-src 'self' 'unsafe-inline' https://telegram.org https://*.telegram.org; connect-src 'self' wss: https://api.binance.com https://api.btcc.com https://api.ipify.org https://api.myip.com https://api.ip.sb; img-src 'self' data: https://telegram.org; style-src 'self' 'unsafe-inline'; font-src 'self'; frame-ancestors https://telegram.org https://*.telegram.org https://t.me;"
     )
   }
 
   // Apply rate limiting for API routes
   if (request.nextUrl.pathname.startsWith("/api")) {
     // Get client IP from headers
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0] || request.headers.get('x-real-ip') || "unknown"
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0] || 
+               request.headers.get('x-real-ip') || 
+               "unknown"
+    
     const key = `${ip}:${request.nextUrl.pathname}`
 
     // Check if the client has exceeded the rate limit
@@ -88,7 +130,6 @@ export async function middleware(request: NextRequest) {
         data: {
           method: request.method,
           url: request.nextUrl.toString(),
-          headers: Object.fromEntries(request.headers),
         },
       })
     }
