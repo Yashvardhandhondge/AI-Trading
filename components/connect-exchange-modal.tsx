@@ -36,23 +36,8 @@ export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModa
   const [apiKey, setApiKey] = useState("")
   const [apiSecret, setApiSecret] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<{message: string, code?: string} | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [showSuccess, setShowSuccess] = useState(false)
-  
-  // Check if we're in a Telegram WebApp environment
-  const [isTelegramWebApp, setIsTelegramWebApp] = useState(false)
-  
-  useEffect(() => {
-    // Detect if we're running in Telegram WebApp
-    const isTelegram = window.Telegram && window.Telegram.WebApp;
-    setIsTelegramWebApp(!!isTelegram);
-    
-    if (isTelegram) {
-      logger.info("Telegram WebApp environment detected", {
-        context: "ConnectExchange"
-      });
-    }
-  }, []);
 
   useEffect(() => {
     // Reset error state when modal is opened/closed
@@ -69,10 +54,6 @@ export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModa
     setShowSuccess(false)
     
     try {
-      logger.info(`Attempting to connect to ${exchange} ${isTelegramWebApp ? 'in Telegram WebApp' : 'in browser'}`, {
-        context: "ConnectExchange"
-      });
-      
       const response = await fetch("/api/exchange/connect", {
         method: "POST",
         headers: {
@@ -81,16 +62,16 @@ export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModa
         body: JSON.stringify({
           exchange,
           apiKey,
-          apiSecret,
-          // Add a flag to indicate we're in Telegram WebApp
-          isTelegramWebApp
+          apiSecret
         }),
       })
       
       const data = await response.json()
       
       if (!response.ok) {
-        logger.error(`Exchange connection failed: ${data.error}`)
+        logger.error(`Exchange connection failed: ${data.error}`, {
+          context: "ConnectExchange"
+        })
         
         throw new Error(data.error || "Failed to connect exchange")
       }
@@ -110,10 +91,7 @@ export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModa
         router.refresh()
       }, 1500)
     } catch (err) {
-      setError({
-        message: err instanceof Error ? err.message : "Failed to connect exchange",
-        code: err instanceof Error && (err as any).code ? (err as any).code : undefined
-      })
+      setError(err instanceof Error ? err.message : "Failed to connect exchange")
     } finally {
       setIsLoading(false)
     }
@@ -156,23 +134,12 @@ export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModa
                 </p>
               </div>
 
-              {isTelegramWebApp && (
-                <Alert className="border-blue-500 bg-blue-50 dark:bg-blue-900/20">
-                  <Info className="h-4 w-4" />
-                  <AlertTitle className="text-blue-800 dark:text-blue-300">Telegram Mode Active</AlertTitle>
-                  <AlertDescription className="text-blue-700 dark:text-blue-400">
-                    We'll use a secure server-side proxy to ensure API connections work in Telegram.
-                    You don't need to whitelist any special IPs - just make sure your API has trading permissions enabled.
-                  </AlertDescription>
-                </Alert>
-              )}
-
               {error && (
                 <Alert variant="destructive" className="border-red-500 bg-red-50 dark:bg-red-900/20">
                   <AlertCircle className="h-4 w-4" />
                   <AlertTitle className="text-red-800 dark:text-red-300">Connection Error</AlertTitle>
                   <AlertDescription className="text-red-700 dark:text-red-400">
-                    {error.message}
+                    {error}
                   </AlertDescription>
                 </Alert>
               )}
