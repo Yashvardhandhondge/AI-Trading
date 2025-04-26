@@ -54,64 +54,93 @@ export function Settings({ user }: SettingsProps) {
       // Get a unique identifier for this user
       const effectiveUserId = user.id || Date.now().toString();
       
-      // if (!proxyServerAvailable) {
-      //   throw new Error("Cannot connect to proxy server at https://terrain-main-civic-organizing.trycloudflare.com. Make sure it's running.");
-      // }
-      
       // Only update credentials if both API key and secret are provided
-      if (true) {
-        // Send credentials directly to the proxy backend server
-        alert("Sending credentials to proxy server");
-        const backendResponse = await fetch('https://terrain-main-civic-organizing.trycloudflare.com/api/register-key', {
-          method: 'POST',
+      if (apiKey && apiSecret) {
+        try {
+          // Send credentials directly to the proxy backend server
+          const backendResponse = await fetch('https://terrain-main-civic-organizing.trycloudflare.com/api/register-key', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Origin': window.location.origin
+            },
+            body: JSON.stringify({
+              userId: effectiveUserId,
+              apiKey,
+              apiSecret,
+              exchange: exchange
+            }),
+            mode: 'cors'
+          });
+          
+          // Check for backend errors
+          if (!backendResponse.ok) {
+            const errorData = await backendResponse.json().catch(() => ({ error: `HTTP error: ${backendResponse.status}` }));
+            setError(errorData.error || "Failed to register with backend server");
+            return;
+          }
+          
+          const backendData = await backendResponse.json();
+          console.log("Backend registration successful:", backendData);
+          
+          // Now update your app's database
+          const response = await fetch("/api/exchange/update", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              exchange,
+              proxyUserId: effectiveUserId,
+              connected: true
+            }),
+          });
+          
+          if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || "Failed to update exchange settings");
+          }
+          
+          setSuccess("Exchange settings updated successfully");
+          setApiKey("");
+          setApiSecret("");
+          router.refresh();
+        } catch (fetchError:any) {
+          console.error("Fetch error:", fetchError);
+          
+          // Check specifically for CSP errors
+          if (fetchError.name === 'TypeError' && fetchError.message.includes('Failed to fetch')) {
+            setError(`Content Security Policy blocked connection to proxy server. Please check console for details.`);
+          } else {
+            setError(fetchError instanceof Error ? fetchError.message : "Network error connecting to proxy server");
+          }
+        }
+      } else {
+        // If no API keys provided, just update exchange type
+        const response = await fetch("/api/exchange/update", {
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json'
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            userId: effectiveUserId,
-            apiKey,
-            apiSecret,
-            exchange: exchange
-          })
+            exchange,
+            connected: false
+          }),
         });
-        alert("Received response from proxy server");
-        alert(JSON.stringify(backendResponse));
-        // Check for backend errors
-        if (!backendResponse.ok) {
-          const errorData = await backendResponse.json();
-          throw new Error(errorData.error || "Failed to register with backend server");
+        
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "Failed to update exchange settings");
         }
         
-        const backendData = await backendResponse.json();
-        console.log("Backend registration successful:", backendData);
+        setSuccess("Exchange type updated successfully");
+        router.refresh();
       }
-      
-      // Now update your app's database with the exchange type and proxy user ID
-      const response = await fetch("/api/exchange/update", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          exchange,
-          proxyUserId: effectiveUserId,
-          connected: true // Only set to connected if we have provided new credentials
-        }),
-      })
-      
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || "Failed to update exchange settings")
-      }
-
-      setSuccess("Exchange settings updated successfully")
-      setApiKey("")
-      setApiSecret("")
-      router.refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update exchange settings")
+      console.error("Error in handleExchangeUpdate:", err);
+      setError(err instanceof Error ? err.message : "Failed to update exchange settings");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
   }
 
