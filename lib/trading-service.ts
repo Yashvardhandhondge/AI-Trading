@@ -43,11 +43,7 @@ export class ProxyTradingService {
       if (!response.ok) {
         const errorData = await response.json();
         const errorMessage = errorData.error || errorData.message || `Error ${response.status}`;
-        logger.error(`Proxy request failed: ${errorMessage}`, {
-          context: "ProxyTradingService",
-          userId,
-          data: { endpoint, status: response.status }
-        });
+        logger.error(`Proxy request failed: ${errorMessage}`);
         throw new Error(errorMessage);
       }
       
@@ -60,10 +56,7 @@ export class ProxyTradingService {
       
       return responseData.data;
     } catch (error) {
-      logger.error(`Proxy request error: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: "ProxyTradingService",
-        userId
-      });
+      logger.error(`Proxy request error: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
     }
   }
@@ -97,10 +90,7 @@ export class ProxyTradingService {
       if (!response.ok) {
         const errorData = await response.json();
         const errorMessage = errorData.error || errorData.message || `Error ${response.status}`;
-        logger.error(`API key registration failed: ${errorMessage}`, {
-          context: "ProxyTradingService",
-          userId
-        });
+        logger.error(`API key registration failed: ${errorMessage}`);
         throw new Error(errorMessage);
       }
       
@@ -113,29 +103,28 @@ export class ProxyTradingService {
       
       return true;
     } catch (error) {
-      logger.error(`API key registration error: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: "ProxyTradingService",
-        userId
-      });
+      logger.error(`API key registration error: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
     }
   }
-  
-  /**
-   * Test the connection to Binance via the proxy
-   */
-  static async testConnection(userId: string | number): Promise<boolean> {
+
+  static async checkApiKeyStatus(userId: string | number): Promise<boolean> {
     try {
-      await this.getAccountInfo(userId);
-      return true;
+      const response = await fetch(`${this.PROXY_URL}/api/user/${userId}/key-status`);
+      
+      if (!response.ok) {
+        return false;
+      }
+      
+      const data = await response.json();
+      return data.registered === true;
     } catch (error) {
-      logger.error(`Connection test failed: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: "ProxyTradingService",
-        userId
-      });
+      logger.error(`Error checking API key status: ${error instanceof Error ? error.message : "Unknown error"}`);
       return false;
     }
   }
+  
+
   
   /**
    * Get account information
@@ -162,10 +151,7 @@ export class ProxyTradingService {
         total: Number.parseFloat(balance.free) + Number.parseFloat(balance.locked),
       }));
     } catch (error) {
-      logger.error(`Error getting balances: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: "ProxyTradingService",
-        userId
-      });
+      logger.error(`Error getting balances: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
     }
   }
@@ -178,10 +164,7 @@ export class ProxyTradingService {
       const response = await this.makeProxyRequest(userId, "/api/v3/ticker/price", "GET", { symbol });
       return Number.parseFloat(response.price);
     } catch (error) {
-      logger.error(`Error getting price for ${symbol}: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: "ProxyTradingService",
-        userId
-      });
+      logger.error(`Error getting price for ${symbol}: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
     }
   }
@@ -227,11 +210,7 @@ export class ProxyTradingService {
         timestamp: response.transactTime,
       };
     } catch (error) {
-      logger.error(`Error executing trade: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: "ProxyTradingService",
-        userId,
-        data: { symbol, side }
-      });
+      logger.error(`Error executing trade: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
     }
   }
@@ -287,10 +266,7 @@ export class ProxyTradingService {
         holdings,
       };
     } catch (error) {
-      logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: "ProxyTradingService",
-        userId
-      });
+      logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : "Unknown error"}`);
       
       // If this is a development environment, return mock data
       if (process.env.NODE_ENV === "development" || process.env.USE_MOCK_DATA === "true") {
@@ -313,10 +289,7 @@ export class ProxyTradingService {
       
       return this.makeProxyRequest(userId, "/api/v3/openOrders", "GET", params);
     } catch (error) {
-      logger.error(`Error getting open orders: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: "ProxyTradingService",
-        userId
-      });
+      logger.error(`Error getting open orders: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
     }
   }
@@ -331,10 +304,7 @@ export class ProxyTradingService {
         orderId
       });
     } catch (error) {
-      logger.error(`Error canceling order: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: "ProxyTradingService",
-        userId
-      });
+      logger.error(`Error canceling order: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
     }
   }

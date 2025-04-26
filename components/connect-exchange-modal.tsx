@@ -24,16 +24,15 @@ import {
 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { logger } from "@/lib/logger"
-import { ProxyTradingService } from "@/lib/trading-service"
 
 interface ConnectExchangeModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   userId?: number
-  user?: any;
+  onSuccess?: () => void
 }
 
-export function ConnectExchangeModal({ open, onOpenChange,userId,user }: ConnectExchangeModalProps) {
+export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: ConnectExchangeModalProps) {
   const router = useRouter()
   const [exchange, setExchange] = useState<"binance" | "btcc">("binance")
   const [apiKey, setApiKey] = useState("")
@@ -41,94 +40,112 @@ export function ConnectExchangeModal({ open, onOpenChange,userId,user }: Connect
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSuccess, setShowSuccess] = useState(false)
+  const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
 
   useEffect(() => {
-    // Reset error state when modal is opened/closed
+    // Check if proxy server is available
+    const checkProxyServer = async () => {
+      try {
+        const response = await fetch('http://localhost:3000/health', { 
+          signal: AbortSignal.timeout(2000) // 2 second timeout
+        });
+        setProxyServerAvailable(response.ok);
+      } catch (error) {
+        console.error("Proxy server check failed:", error);
+        setProxyServerAvailable(false);
+      }
+    };
+    
     if (open) {
+      checkProxyServer();
       setError(null)
       setShowSuccess(false)
     }
   }, [open])
 
-  // Modified handleSubmit function for components/connect-exchange-modal.tsx
-
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setIsLoading(true);
-  setError(null);
-  setShowSuccess(false);
-  
-  try {
-    // Get a unique identifier for this user
-    const effectiveUserId = userId || user?.id || Date.now().toString();
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError(null);
+    setShowSuccess(false);
     
-    console.log("Connecting to external backend at http://localhost:3000");
-    
-    // Send credentials directly to your backend server
-    const backendResponse = await fetch('http://localhost:3000/api/register-key', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        userId: effectiveUserId,
-        apiKey,
-        apiSecret,
-        exchange: exchange
-      })
-    });
-    
-    // Check for backend errors
-    if (!backendResponse.ok) {
-      const errorData = await backendResponse.json();
-      throw new Error(errorData.error || "Failed to register with backend server");
-    }
-    
-    const backendData = await backendResponse.json();
-    console.log("Backend registration successful:", backendData);
-    
-    // Now that backend succeeded, update your app's database
-    const response = await fetch("/api/exchange/connect", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        exchange,
-        proxyUserId: effectiveUserId,
-        connected: true
-      }),
-    });
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      logger.error(`Exchange connection failed: ${data.error}`, {
-        context: "ConnectExchange"
+    try {
+      // Get a unique identifier for this user
+      const effectiveUserId = userId || Date.now().toString();
+      
+      console.log(`Connecting to external backend at http://localhost:3000 for user ${effectiveUserId}`);
+      
+      if (!proxyServerAvailable) {
+        throw new Error("Cannot connect to proxy server at http://localhost:3000. Make sure it's running.");
+      }
+      
+      // Send credentials directly to your backend server
+      const backendResponse = await fetch('http://localhost:3000/api/register-key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userId: effectiveUserId,
+          apiKey,
+          apiSecret,
+          exchange: exchange
+        })
       });
       
-      throw new Error(data.error || "Failed to connect exchange");
+      // Check for backend errors
+      if (!backendResponse.ok) {
+        const errorData = await backendResponse.json();
+        throw new Error(errorData.error || "Failed to register with backend server");
+      }
+      
+      const backendData = await backendResponse.json();
+      console.log("Backend registration successful:", backendData);
+      
+      // Now that backend succeeded, update your app's database
+      const response = await fetch("/api/exchange/connect", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          exchange,
+          proxyUserId: effectiveUserId,
+          connected: true
+        }),
+      });
+      
+      if (!response.ok) {
+        const data = await response.json();
+        logger.error(`Exchange connection failed: ${data.error}`, {
+          context: "ConnectExchange"
+        });
+        
+        throw new Error(data.error || "Failed to connect exchange");
+      }
+      
+      logger.info("Exchange connected successfully", {
+        context: "ConnectExchange",
+        data: { exchange }
+      });
+      
+      // Show success message
+      setShowSuccess(true);
+      setTimeout(() => {
+        onOpenChange(false);
+        if (onSuccess) {
+          onSuccess();
+        } else {
+          router.refresh();
+        }
+      }, 1500);
+    } catch (err) {
+      console.error("Connection error:", err);
+      setError(err instanceof Error ? err.message : "Failed to connect exchange");
+    } finally {
+      setIsLoading(false);
     }
-    
-    logger.info("Exchange connected successfully", {
-      context: "ConnectExchange",
-      data: { exchange }
-    });
-    
-    // Show success message
-    setShowSuccess(true);
-    setTimeout(() => {
-      onOpenChange(false);
-      router.push("/");
-      router.refresh();
-    }, 1500);
-  } catch (err) {
-    console.error("Connection error:", err);
-    setError(err instanceof Error ? err.message : "Failed to connect exchange");
-  } finally {
-    setIsLoading(false);
-  }
-};
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -139,6 +156,16 @@ const handleSubmit = async (e: React.FormEvent) => {
             Connect your cryptocurrency exchange to execute trades and track your portfolio automatically.
           </DialogDescription>
         </DialogHeader>
+
+        {!proxyServerAvailable && (
+          <Alert variant="destructive" className="mb-4 border-red-500 bg-red-50 dark:bg-red-900/20">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle className="text-red-800 dark:text-red-300">Proxy Server Not Available</AlertTitle>
+            <AlertDescription className="text-red-700 dark:text-red-400">
+              Cannot connect to proxy server at http://localhost:3000. Please make sure it's running.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {showSuccess ? (
           <div className="py-8 text-center">
@@ -162,7 +189,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               <div className="rounded-md bg-blue-50 p-3 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 flex items-start">
                 <Shield className="h-5 w-5 mr-2 mt-0.5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                 <p className="text-sm">
-                  Your exchange API keys are encrypted and stored securely with AES-256 encryption.
+                  Your exchange API keys are encrypted and stored securely on the proxy server.
                   Only keys with <strong>trading permissions</strong> will work with this app.
                 </p>
               </div>
@@ -204,6 +231,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
                       required
+                      disabled={!proxyServerAvailable}
                     />
                   </div>
                   
@@ -215,6 +243,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                       value={apiSecret}
                       onChange={(e) => setApiSecret(e.target.value)}
                       required
+                      disabled={!proxyServerAvailable}
                     />
                   </div>
                 </div>
@@ -264,7 +293,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               <Button
                 onClick={handleSubmit}
                 className="bg-blue-600 hover:bg-blue-700"
-                disabled={isLoading || !apiKey || !apiSecret}
+                disabled={isLoading || !apiKey || !apiSecret || !proxyServerAvailable}
               >
                 {isLoading ? (
                   <>
