@@ -18,7 +18,7 @@ export default function TradingPanel({ userId }:any) {
       try {
         setIsLoading(true);
         // First check if user's key is stored in the proxy server
-        const response = await fetch(`https://insertion-elderly-positive-ef.trycloudflare.com/api/user/${userId}/key-status`);
+        const response = await fetch(`https://positions-embedded-capable-taxation.trycloudflare.com/api/user/${userId}/key-status`);
         
         if (response.ok) {
           const data = await response.json();
@@ -27,7 +27,7 @@ export default function TradingPanel({ userId }:any) {
           if (data.registered) {
             // If user has keys registered, fetch portfolio data
             try {
-              const portfolioResponse = await fetch('https://insertion-elderly-positive-ef.trycloudflare.com/api/proxy/binance', {
+              const portfolioResponse = await fetch('https://positions-embedded-capable-taxation.trycloudflare.com/api/proxy/binance', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json'
@@ -66,7 +66,7 @@ export default function TradingPanel({ userId }:any) {
         }
       } catch (err) {
         console.error("Error checking exchange connection:", err);
-        logger.error("Could not connect to proxy server at https://insertion-elderly-positive-ef.trycloudflare.com");
+        logger.error("Could not connect to proxy server at https://positions-embedded-capable-taxation.trycloudflare.com");
       } finally {
         setIsLoading(false);
       }
@@ -103,7 +103,7 @@ export default function TradingPanel({ userId }:any) {
               <div>
                 <p className="font-medium">Proxy Server Error</p>
                 <p className="text-sm">{error}</p>
-                <p className="text-sm mt-2">Make sure your proxy server is running at https://insertion-elderly-positive-ef.trycloudflare.com</p>
+                <p className="text-sm mt-2">Make sure your proxy server is running at https://positions-embedded-capable-taxation.trycloudflare.com</p>
               </div>
             </div>
           </CardContent>
