@@ -17,6 +17,7 @@ interface SettingsProps {
 }
 
 export function Settings({ user }: SettingsProps) {
+  const router = useRouter()
   const [exchange, setExchange] = useState<"binance" | "btcc">(user.exchange || "binance")
   const [apiKey, setApiKey] = useState("")
   const [apiSecret, setApiSecret] = useState("")
@@ -112,36 +113,36 @@ export function Settings({ user }: SettingsProps) {
     }
   }
 
-  const handleRiskUpdate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
-    setError(null)
-    setSuccess(null)
+  // const handleRiskUpdate = async (e: React.FormEvent) => {
+  //   e.preventDefault()
+  //   setIsLoading(true)
+  //   setError(null)
+  //   setSuccess(null)
 
-    try {
-      const response = await fetch("/api/user/risk", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          riskLevel,
-        }),
-      })
+  //   try {
+  //     const response = await fetch("/api/user/risk", {
+  //       method: "POST",
+  //       headers: {
+  //         "Content-Type": "application/json",
+  //       },
+  //       body: JSON.stringify({
+  //         riskLevel,
+  //       }),
+  //     })
 
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || "Failed to update risk settings")
-      }
+  //     if (!response.ok) {
+  //       const data = await response.json()
+  //       throw new Error(data.error || "Failed to update risk settings")
+  //     }
 
-      setSuccess("Risk level updated successfully")
-      router.refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update risk settings")
-    } finally {
-      setIsLoading(false)
-    }
-  }
+  //     setSuccess("Risk level updated successfully")
+  //     router.refresh()
+  //   } catch (err) {
+  //     setError(err instanceof Error ? err.message : "Failed to update risk settings")
+  //   } finally {
+  //     setIsLoading(false)
+  //   }
+  // }
 
   return (
     <div className="container mx-auto p-4 pb-20">
@@ -215,7 +216,7 @@ export function Settings({ user }: SettingsProps) {
         </CardFooter>
       </Card>
 
-      <Card>
+      {/* <Card>
         <CardHeader>
           <CardTitle>Risk Settings</CardTitle>
           <CardDescription>Configure your risk tolerance for trading signals</CardDescription>
@@ -263,7 +264,7 @@ export function Settings({ user }: SettingsProps) {
 
           {success && <p className="text-sm font-medium text-green-500">{success}</p>}
         </CardFooter>
-      </Card>
+      </Card> */}
     </div>
   )
 }

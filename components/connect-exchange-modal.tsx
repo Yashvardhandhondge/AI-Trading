@@ -117,9 +117,7 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
       
       if (!response.ok) {
         const data = await response.json();
-        logger.error(`Exchange connection failed: ${data.error}`, {
-          context: "ConnectExchange"
-        });
+        logger.error(`Exchange connection failed: ${data.error}`);
         
         throw new Error(data.error || "Failed to connect exchange");
       }

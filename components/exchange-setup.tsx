@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState,useEffect } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -13,6 +13,7 @@ import { Loader2, Info, AlertCircle } from "lucide-react"
 import type { SessionUser } from "@/lib/auth"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ProxyTradingService } from "@/lib/trading-service" // Import the proxy service
 
 interface ExchangeSetupProps {
   user: SessionUser
@@ -26,6 +27,56 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+  const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
+  const [proxyServerUrl, setProxyServerUrl] = useState('http://localhost:3000')
+  
+  // Check if proxy server is available
+  useEffect(() => {
+    // First try to get from environment
+    const configuredUrl = process.env.NEXT_PUBLIC_PROXY_SERVER_URL;
+    if (configuredUrl) {
+      setProxyServerUrl(configuredUrl);
+    }
+    
+    const checkProxyServer = async () => {
+      try {
+        // Use the configured URL for the health check
+        const response = await fetch(`${proxyServerUrl}/health`, { 
+          signal: AbortSignal.timeout(3000), // 3 second timeout
+          mode: 'cors' // Explicitly request CORS 
+        });
+        
+        const available = response.ok;
+        setProxyServerAvailable(available);
+        console.log(`Proxy server check at ${proxyServerUrl}: ${available ? "Available" : "Unavailable"}`);
+        
+        if (!available && proxyServerUrl === 'http://localhost:3000') {
+          // If localhost failed, try public domain if configured
+          const publicUrl = process.env.NEXT_PUBLIC_PROXY_PUBLIC_URL;
+          if (publicUrl) {
+            try {
+              console.log(`Trying alternative proxy server: ${publicUrl}`);
+              const altResponse = await fetch(`${publicUrl}/health`, { 
+                signal: AbortSignal.timeout(3000)
+              });
+              if (altResponse.ok) {
+                setProxyServerUrl(publicUrl);
+                setProxyServerAvailable(true);
+                console.log(`Connected to alternative proxy server: ${publicUrl}`);
+              }
+            } catch (e) {
+              console.error("Alternative proxy server check failed:", e);
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`Proxy server check failed for ${proxyServerUrl}:`, error);
+        setProxyServerAvailable(false);
+      }
+    };
+    
+    checkProxyServer();
+  }, []);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -33,6 +84,39 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
     setError(null)
     
     try {
+      // Get a unique identifier for this user
+      const effectiveUserId = user.id || Date.now().toString();
+      
+      console.log(`Connecting to proxy server at ${proxyServerUrl} for user ${effectiveUserId}`);
+      
+      if (!proxyServerAvailable) {
+        throw new Error(`Cannot connect to proxy server at ${proxyServerUrl}. Make sure it's running.`);
+      }
+      
+      // First, register API keys with the proxy server
+      const backendResponse = await fetch(`${proxyServerUrl}/api/register-key`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userId: effectiveUserId,
+          apiKey,
+          apiSecret,
+          exchange
+        })
+      });
+      
+      // Check for backend errors
+      if (!backendResponse.ok) {
+        const errorData = await backendResponse.json();
+        throw new Error(errorData.error || "Failed to register with backend server");
+      }
+      
+      const backendData = await backendResponse.json();
+      console.log("Backend registration successful:", backendData);
+      
+      // Then update your app database
       const response = await fetch("/api/exchange/connect", {
         method: "POST",
         headers: {
@@ -40,21 +124,26 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
         },
         body: JSON.stringify({
           exchange,
-          apiKey,
-          apiSecret,
+          proxyUserId: effectiveUserId,
+          connected: true,
+          proxyServerUrl // Store the URL that worked
         }),
-      })
+      });
       
       if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || "Failed to connect exchange")
+        const data = await response.json();
+        throw new Error(data.error || "Failed to connect exchange");
       }
+      
+      // Store the successful URL in localStorage for future use
+      localStorage.setItem('proxyServerUrl', proxyServerUrl);
       
       // Refresh user data
       router.refresh()
       onComplete()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect exchange")
+      console.error("Connection error:", err);
+      setError(err instanceof Error ? err.message : "Failed to connect exchange");
     } finally {
       setIsLoading(false)
     }
@@ -90,6 +179,21 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {!proxyServerAvailable && (
+            <Alert className="mb-4 border-red-500 bg-red-50 dark:bg-red-900/20">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle className="text-red-800 dark:text-red-300">Proxy Server Not Available</AlertTitle>
+              <AlertDescription className="text-red-700 dark:text-red-400">
+                Cannot connect to proxy server at {proxyServerUrl}. Please make sure it's running.
+                <br/>
+                <small className="mt-2 block">
+                  Note: Telegram WebApp may block connection to localhost. 
+                  Try running the proxy on a public URL or device IP address (not localhost).
+                </small>
+              </AlertDescription>
+            </Alert>
+          )}
+
           <Alert className="mb-4">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>API keys with trading permissions required</AlertTitle>
@@ -203,7 +307,7 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
             type="submit"
             onClick={handleSubmit}
             className="w-full"
-            disabled={isLoading}
+            disabled={isLoading || !proxyServerAvailable}
           >
             {isLoading ? (
               <>
