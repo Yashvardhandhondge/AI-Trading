@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -24,15 +24,66 @@ export function Settings({ user }: SettingsProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const router = useRouter()
+  const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
+
+  useEffect(() => {
+    // Check if proxy server is available
+    const checkProxyServer = async () => {
+      try {
+        const response = await fetch('http://localhost:3000/health', { 
+          signal: AbortSignal.timeout(2000) // 2 second timeout
+        });
+        setProxyServerAvailable(response.ok);
+      } catch (error) {
+        console.error("Proxy server check failed:", error);
+        setProxyServerAvailable(false);
+      }
+    };
+    
+    checkProxyServer();
+  }, [])
 
   const handleExchangeUpdate = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
     setError(null)
     setSuccess(null)
-
+    
     try {
+      // Get a unique identifier for this user
+      const effectiveUserId = user.id || Date.now().toString();
+      
+      if (!proxyServerAvailable) {
+        throw new Error("Cannot connect to proxy server at http://localhost:3000. Make sure it's running.");
+      }
+      
+      // Only update credentials if both API key and secret are provided
+      if (apiKey && apiSecret) {
+        // Send credentials directly to the proxy backend server
+        const backendResponse = await fetch('http://localhost:3000/api/register-key', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userId: effectiveUserId,
+            apiKey,
+            apiSecret,
+            exchange: exchange
+          })
+        });
+        
+        // Check for backend errors
+        if (!backendResponse.ok) {
+          const errorData = await backendResponse.json();
+          throw new Error(errorData.error || "Failed to register with backend server");
+        }
+        
+        const backendData = await backendResponse.json();
+        console.log("Backend registration successful:", backendData);
+      }
+      
+      // Now update your app's database with the exchange type and proxy user ID
       const response = await fetch("/api/exchange/update", {
         method: "POST",
         headers: {
@@ -40,11 +91,11 @@ export function Settings({ user }: SettingsProps) {
         },
         body: JSON.stringify({
           exchange,
-          apiKey,
-          apiSecret,
+          proxyUserId: effectiveUserId,
+          connected: true // Only set to connected if we have provided new credentials
         }),
       })
-
+      
       if (!response.ok) {
         const data = await response.json()
         throw new Error(data.error || "Failed to update exchange settings")

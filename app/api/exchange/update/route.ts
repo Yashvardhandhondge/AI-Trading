@@ -1,9 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/auth"
-import { connectToDatabase, models, encryptApiKey } from "@/lib/db"
-import { ExchangeService } from "@/lib/exchange"
-
-const API_SECRET_KEY = process.env.API_SECRET_KEY || "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+import { connectToDatabase, models } from "@/lib/db"
+import { logger } from "@/lib/logger"
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,7 +11,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { exchange, apiKey, apiSecret } = await request.json()
+    const { exchange, proxyUserId, connected } = await request.json()
 
     if (!exchange || !["binance", "btcc"].includes(exchange)) {
       return NextResponse.json({ error: "Invalid exchange" }, { status: 400 })
@@ -29,45 +27,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    // If API credentials are provided, validate them
-    if (apiKey && apiSecret) {
-      try {
-        const exchangeService = new ExchangeService(exchange, { apiKey, apiSecret })
-        const isValid = await exchangeService.validateConnection()
-
-        if (!isValid) {
-          return NextResponse.json({ error: "Invalid API credentials" }, { status: 400 })
-        }
-
-        // Encrypt API credentials
-        const encryptedApiKey = encryptApiKey(apiKey, API_SECRET_KEY)
-        const encryptedApiSecret = encryptApiKey(apiSecret, API_SECRET_KEY)
-
-        // Update user exchange settings
-        user.exchange = exchange
-        user.apiKey = encryptedApiKey
-        user.apiSecret = encryptedApiSecret
-        user.exchangeConnected = true
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Could not connect to exchange"
-        return NextResponse.json(
-          {
-            error: `Connection failed: ${errorMessage}`,
-          },
-          { status: 400 },
-        )
-      }
-    } else {
-      // Only update exchange type
-      user.exchange = exchange
+    // Update user record with the exchange type and proxy info
+    user.exchange = exchange;
+    user.exchangeConnected = connected || user.exchangeConnected || false;
+    
+    if (proxyUserId) {
+      user.proxyUserId = proxyUserId;
+      user.apiKeyStoredExternally = true;
+      
+      // Remove any previously stored API credentials for security
+      if (user.apiKey) user.apiKey = undefined;
+      if (user.apiSecret) user.apiSecret = undefined;
     }
-
-    user.updatedAt = new Date()
-    await user.save()
+    
+    user.updatedAt = new Date();
+    await user.save();
+    
+    logger.info("User exchange settings updated", {
+      context: "ExchangeUpdate",
+      userId: sessionUser.id
+    });
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error("Error updating exchange:", error)
+    logger.error(`Error updating exchange: ${error instanceof Error ? error.message : "Unknown error"}`);
     return NextResponse.json({ error: "Failed to update exchange" }, { status: 500 })
   }
 }
