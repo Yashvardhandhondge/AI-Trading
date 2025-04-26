@@ -46,7 +46,7 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
     // Check if proxy server is available
     const checkProxyServer = async () => {
       try {
-        const response = await fetch('http://13.60.210.111:3000/health', { 
+        const response = await fetch('https://13.60.210.111/health', { 
           signal: AbortSignal.timeout(2000) // 2 second timeout
         });
         setProxyServerAvailable(response.ok);
@@ -73,14 +73,14 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
       // Get a unique identifier for this user
       const effectiveUserId = userId || Date.now().toString();
       
-      console.log(`Connecting to external backend at http://13.60.210.111:3000 for user ${effectiveUserId}`);
+      console.log(`Connecting to external backend at https://13.60.210.111 for user ${effectiveUserId}`);
       
       if (!proxyServerAvailable) {
-        throw new Error("Cannot connect to proxy server at http://13.60.210.111:3000. Make sure it's running.");
+        throw new Error("Cannot connect to proxy server at https://13.60.210.111. Make sure it's running.");
       }
       
       // Send credentials directly to your backend server
-      const backendResponse = await fetch('http://13.60.210.111:3000/api/register-key', {
+      const backendResponse = await fetch('https://13.60.210.111/api/register-key', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -160,7 +160,7 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
             <AlertCircle className="h-4 w-4" />
             <AlertTitle className="text-red-800 dark:text-red-300">Proxy Server Not Available</AlertTitle>
             <AlertDescription className="text-red-700 dark:text-red-400">
-              Cannot connect to proxy server at http://13.60.210.111:3000. Please make sure it's running.
+              Cannot connect to proxy server at https://13.60.210.111. Please make sure it's running.
             </AlertDescription>
           </Alert>
         )}

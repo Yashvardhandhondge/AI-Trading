@@ -28,7 +28,7 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
   const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
-  const [proxyServerUrl, setProxyServerUrl] = useState('http://13.60.210.111:3000')
+  const [proxyServerUrl, setProxyServerUrl] = useState('https://13.60.210.111')
   
   // Check if proxy server is available
   useEffect(() => {
@@ -50,7 +50,7 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
         setProxyServerAvailable(available);
         console.log(`Proxy server check at ${proxyServerUrl}: ${available ? "Available" : "Unavailable"}`);
         
-        if (!available && proxyServerUrl === 'http://13.60.210.111:3000') {
+        if (!available && proxyServerUrl === 'https://13.60.210.111') {
           // If localhost failed, try public domain if configured
           const publicUrl = process.env.NEXT_PUBLIC_PROXY_PUBLIC_URL;
           if (publicUrl) {
