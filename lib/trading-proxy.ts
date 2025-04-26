@@ -48,14 +48,18 @@ export class TradingProxyService {
   /**
    * Register API keys with the proxy server
    */
-  public async registerApiKey(userId: string | number, apiKey: string, apiSecret: string, exchange: string = 'binance'): Promise<boolean> {
+ /**
+ * Register API keys with the proxy server
+ */
+public async registerApiKey(userId: string | number, apiKey: string, apiSecret: string, exchange: string = 'binance'): Promise<boolean> {
     try {
       logger.info(`Registering API key with proxy server for user ${userId}`, {
         context: 'TradingProxy',
         userId
       });
-
-      const response = await fetch(`${this.proxyServerUrl}/api/register-key`, {
+  
+      const proxyServerUrl = process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://binance.yashvardhandhondge.tech';
+      const response = await fetch(`${proxyServerUrl}/api/register-key`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -68,14 +72,17 @@ export class TradingProxyService {
         }),
         signal: AbortSignal.timeout(this.defaultTimeout)
       });
-
+  
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: `HTTP error: ${response.status}` }));
-        const errorMessage = errorData || `Registration failed with status ${response.status}`;
-        logger.error(`API key registration failed: ${errorMessage}`);
+        const errorMessage = errorData.error || `Registration failed with status ${response.status}`;
+        logger.error(`API key registration failed: ${errorMessage}`, {
+          context: 'TradingProxy',
+          userId
+        });
         throw new Error(errorMessage);
       }
-
+  
       const data = await response.json();
       logger.info(`API key registered successfully for user ${userId}`, {
         context: 'TradingProxy',
@@ -84,7 +91,10 @@ export class TradingProxyService {
       
       return true;
     } catch (error) {
-      logger.error(`API key registration error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      logger.error(`API key registration error: ${error instanceof Error ? error.message : 'Unknown error'}`, {
+        context: 'TradingProxy',
+        userId
+      });
       throw error;
     }
   }

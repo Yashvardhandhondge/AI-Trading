@@ -75,7 +75,7 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
   // Check if the proxy server is available
   const checkProxyServer = async () => {
     try {
-      const proxyUrl =  'https://binance.yashvardhandhondge.tech'
+      const proxyUrl = process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://binance.yashvardhandhondge.tech'
       const response = await fetch(`${proxyUrl}/health`, { 
         signal: AbortSignal.timeout(3000)
       })
@@ -120,7 +120,13 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
           exchange
         )
         
+        logger.info("API key registered with proxy server successfully", {
+          context: "ConnectExchangeModal",
+          userId: userId
+        })
+        
         // Update the user record in our database to reflect the connected status
+        // Note: We do NOT send the API keys to our backend
         const response = await fetch("/api/exchange/connect", {
           method: "POST",
           headers: {
@@ -161,13 +167,19 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
         }, 1500)
       } catch (proxyError) {
         const errorMessage = proxyError instanceof Error ? proxyError.message : "Unknown error"
-        logger.error(`Failed to register API key with proxy: ${errorMessage}`)
+        logger.error(`Failed to register API key with proxy: ${errorMessage}`, {
+          context: "ConnectExchangeModal",
+          userId: userId
+        })
         throw new Error(errorMessage)
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred"
       setError(errorMessage)
-      logger.error(`Exchange connection error: ${errorMessage}`)
+      logger.error(`Exchange connection error: ${errorMessage}`, {
+        context: "ConnectExchangeModal",
+        userId: userId
+      })
     } finally {
       setIsLoading(false)
     }
