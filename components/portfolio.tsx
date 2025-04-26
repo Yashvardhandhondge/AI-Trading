@@ -7,6 +7,16 @@ import { Loader2, TrendingUp, TrendingDown } from "lucide-react"
 import type { Socket } from "socket.io-client"
 import type { SessionUser } from "@/lib/auth"
 import { formatCurrency } from "@/lib/utils"
+import { ProxyTradingService } from "@/lib/trading-service"
+import { logger } from "@/lib/logger"
+
+interface UserHolding {
+  token: string;
+  amount: number;
+  averagePrice?: number;
+  currentPrice?: number;
+  value?: number;
+}
 
 interface PortfolioProps {
   user: SessionUser
@@ -34,39 +44,67 @@ export function Portfolio({ user, socket }: PortfolioProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null)
   const [activeTab, setActiveTab] = useState("overview")
+  const [portfolioValue, setPortfolioValue] = useState(0);
+  const [pnl, setPnl] = useState({ realized: 0, unrealized: 0 });
+  const [userHoldings, setUserHoldings] = useState<UserHolding[]>([]);
+  // const [activeTab, setActiveTab] = useState("overview");
 
-  useEffect(() => {
-    const fetchPortfolio = async () => {
-      try {
-        const response = await fetch("/api/portfolio")
-        if (!response.ok) {
-          throw new Error("Failed to fetch portfolio data")
+// In components/portfolio.tsx, update the useEffect to use the proxy service
+
+useEffect(() => {
+  const fetchPortfolioData = async () => {
+    try {
+      // Only fetch if exchange is connected
+      if (user.exchangeConnected) {
+        setIsLoading(true);
+        
+        try {
+          // Use the proxy service to get portfolio data
+          const portfolioData = await ProxyTradingService.getPortfolio(user.id);
+          
+          // Update the full portfolio state
+          setPortfolio(portfolioData);
+          
+          // Also update the individual states for convenience
+          setPortfolioValue(portfolioData.totalValue || 0);
+          setPnl({
+            realized: portfolioData.realizedPnl || 0,
+            unrealized: portfolioData.unrealizedPnl || 0,
+          });
+          
+          if (portfolioData.holdings) {
+            const holdings = portfolioData.holdings.filter((h:any) => h.amount > 0);
+            setUserHoldings(holdings);
+            
+            logger.info(`User has ${holdings.length} token holdings`, {
+              context: "Portfolio",
+              userId: user.id
+            });
+          }
+        } catch (error) {
+          logger.error("Error fetching portfolio data:", error instanceof Error ? error : new Error(String(error)), {
+            context: "Portfolio",
+            userId: user.id
+          });
+        } finally {
+          setIsLoading(false);
         }
-
-        const data = await response.json()
-        setPortfolio(data)
-      } catch (error) {
-        console.error("Error fetching portfolio:", error)
-      } finally {
-        setIsLoading(false)
       }
+    } catch (error) {
+      logger.error("Error in portfolio effect:", error instanceof Error ? error : new Error(String(error)), {
+        context: "Portfolio",
+        userId: user.id
+      });
     }
+  };
 
-    fetchPortfolio()
-
-    // Listen for portfolio updates
-    if (socket) {
-      socket.on("portfolio-update", (data: PortfolioData) => {
-        setPortfolio(data)
-      })
-    }
-
-    return () => {
-      if (socket) {
-        socket.off("portfolio-update")
-      }
-    }
-  }, [socket])
+  fetchPortfolioData();
+  
+  // Set an interval to refresh the portfolio data every 60 seconds
+  const intervalId = setInterval(fetchPortfolioData, 60000);
+  
+  return () => clearInterval(intervalId);
+}, [user.id, user.exchangeConnected]);
 
   if (isLoading) {
     return (

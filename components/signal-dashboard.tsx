@@ -4,6 +4,7 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { SignalCard } from "@/components/signal-card";
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal";
 import { logger } from "@/lib/logger";
+import { ProxyTradingService } from "@/lib/trading-service";
 
 // Define types
 interface Signal {
@@ -84,55 +85,85 @@ export default function SignalDashboard({
     return () => clearInterval(intervalId);
   }, [userId]);
 
-  const handleSignalAction = async (action: "accept" | "skip", signalId: string) => {
-    try {
-      // If user tries to accept a signal but has no exchange connected, show modal
-      if (action === "accept" && !isExchangeConnected) {
-        setShowConnectExchangeModal(true);
+ // In components/signal-dashboard.tsx, update the handleSignalAction function
+
+const handleSignalAction = async (action: "accept" | "skip", signalId: string) => {
+  try {
+    // If user tries to accept a signal but has no exchange connected, show modal
+    if (action === "accept" && !isExchangeConnected) {
+      setShowConnectExchangeModal(true);
+      return;
+    }
+    
+    // For SELL signals, verify the user actually owns the token
+    if (activeSignal?.type === "SELL" && action === "accept") {
+      const hasToken = userHoldings.some(h => h.token === activeSignal.token && h.amount > 0);
+      if (!hasToken) {
+        logger.error(`Cannot execute SELL for ${activeSignal.token} - user doesn't own this token`);
         return;
       }
-      
-      // For SELL signals, verify the user actually owns the token
-      if (activeSignal?.type === "SELL" && action === "accept") {
-        const hasToken = userHoldings.some(h => h.token === activeSignal.token && h.amount > 0);
-        if (!hasToken) {
-          logger.error(`Cannot execute SELL for ${activeSignal.token} - user doesn't own this token`);
-          return;
+    }
+
+    logger.info(`Processing ${action} action for ${activeSignal?.type} signal on ${activeSignal?.token}`, {
+      context: "SignalDashboard",
+      userId
+    });
+
+    // For Skip signals, simply update UI
+    if (action === "skip") {
+      setActiveSignal(null);
+      return;
+    }
+    
+    // For Accept signals, use the proxy service
+    if (action === "accept" && isExchangeConnected && activeSignal) {
+      try {
+        // For BUY signals, we need to calculate the quantity based on portfolio value
+        if (activeSignal.type === "BUY") {
+          // Get portfolio summary from the proxy
+          const portfolioData = await ProxyTradingService.getPortfolio(userId);
+          const tradeValue = portfolioData.totalValue * 0.1; // 10% of portfolio
+          const quantity = tradeValue / activeSignal.price;
+          
+          // Execute the trade
+          await ProxyTradingService.executeTrade(
+            userId,
+            `${activeSignal.token}USDT`,
+            "BUY",
+            quantity
+          );
+        } 
+        // For SELL signals, we need to sell the entire holding
+        else if (activeSignal.type === "SELL") {
+          // Find the token in holdings
+          const holding = userHoldings.find(h => h.token === activeSignal.token);
+          if (holding) {
+            await ProxyTradingService.executeTrade(
+              userId,
+              `${activeSignal.token}USDT`,
+              "SELL",
+              holding.amount
+            );
+          }
         }
-      }
-
-      logger.info(`Processing ${action} action for ${activeSignal?.type} signal on ${activeSignal?.token}`, {
-        context: "SignalDashboard",
-        userId
-      });
-
-      const response = await fetch(`/api/signals/${signalId}/${action}`, {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to process signal action");
-      }
-
-      // If skipped, remove the signal
-      if (action === "skip") {
-        setActiveSignal(null);
-      }
-      
-      // If accepted, refresh signals
-      if (action === "accept" && isExchangeConnected) {
-        // Wait a moment before refreshing to allow server to process
+        
+        // Refresh signals after trade completes
         setTimeout(() => {
           fetchSignals();
         }, 1000);
+        
+      } catch (tradeError) {
+        logger.error(`Trade execution failed: ${tradeError instanceof Error ? tradeError.message : "Unknown error"}`);
+        setError(tradeError instanceof Error ? tradeError.message : "Failed to execute trade");
       }
-    } catch (error) {
-      logger.error("Error handling signal action:", error instanceof Error ? error : new Error(String(error)), {
-        context: "SignalDashboard",
-        userId
-      });
     }
-  };
+  } catch (error) {
+    logger.error("Error handling signal action:", error instanceof Error ? error : new Error(String(error)), {
+      context: "SignalDashboard",
+      userId
+    });
+  }
+};
   
   // Helper function to check if we should display a signal (especially for SELL signals)
   const shouldDisplaySignal = () => {
@@ -193,9 +224,10 @@ export default function SignalDashboard({
       
       {/* Connect Exchange Modal */}
       <ConnectExchangeModal 
-        open={showConnectExchangeModal} 
-        onOpenChange={setShowConnectExchangeModal} 
-      />
+      open={showConnectExchangeModal} 
+      onOpenChange={setShowConnectExchangeModal}
+      userId={userId}
+    />
     </div>
   );
 }

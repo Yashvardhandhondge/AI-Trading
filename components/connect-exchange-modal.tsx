@@ -24,13 +24,15 @@ import {
 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { logger } from "@/lib/logger"
+import { ProxyTradingService } from "@/lib/trading-service"
 
 interface ConnectExchangeModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  userId?: number
 }
 
-export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModalProps) {
+export function ConnectExchangeModal({ open, onOpenChange,userId }: ConnectExchangeModalProps) {
   const router = useRouter()
   const [exchange, setExchange] = useState<"binance" | "btcc">("binance")
   const [apiKey, setApiKey] = useState("")
@@ -48,12 +50,36 @@ export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModa
   }, [open])
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
-    setError(null)
-    setShowSuccess(false)
+    e.preventDefault();
+    setIsLoading(true);
+    setError(null);
+    setShowSuccess(false);
+    
+    if (!userId) {
+      setError("User ID is required");
+      setIsLoading(false);
+      return;
+    }
     
     try {
+      // First, register the API key with the proxy server
+      try {
+        await ProxyTradingService.registerApiKey(
+          userId,
+          apiKey,
+          apiSecret
+        );
+        
+        logger.info("API key registered with proxy server", {
+          context: "ConnectExchange"
+        });
+      } catch (proxyError) {
+        throw new Error(proxyError instanceof Error ? 
+          proxyError.message : 
+          "Failed to register with proxy server");
+      }
+      
+      // Now update the user's record in your app database (but don't store the actual keys)
       const response = await fetch("/api/exchange/connect", {
         method: "POST",
         headers: {
@@ -61,41 +87,41 @@ export function ConnectExchangeModal({ open, onOpenChange }: ConnectExchangeModa
         },
         body: JSON.stringify({
           exchange,
-          apiKey,
-          apiSecret
+          registered: true,
+          // Don't send actual API keys to your server
         }),
-      })
+      });
       
-      const data = await response.json()
+      const data = await response.json();
       
       if (!response.ok) {
         logger.error(`Exchange connection failed: ${data.error}`, {
           context: "ConnectExchange"
-        })
+        });
         
-        throw new Error(data.error || "Failed to connect exchange")
+        throw new Error(data.error || "Failed to connect exchange");
       }
       
       logger.info("Exchange connected successfully", {
         context: "ConnectExchange",
         data: { exchange }
-      })
+      });
       
       // Show success message briefly before closing
-      setShowSuccess(true)
+      setShowSuccess(true);
       setTimeout(() => {
         // Close the modal
-        onOpenChange(false)
+        onOpenChange(false);
         // Navigate to dashboard
-        router.push("/")
-        router.refresh()
-      }, 1500)
+        router.push("/");
+        router.refresh();
+      }, 1500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect exchange")
+      setError(err instanceof Error ? err.message : "Failed to connect exchange");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
