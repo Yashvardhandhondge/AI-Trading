@@ -54,12 +54,12 @@ export function Settings({ user }: SettingsProps) {
       // Get a unique identifier for this user
       const effectiveUserId = user.id || Date.now().toString();
       
-      if (!proxyServerAvailable) {
-        throw new Error("Cannot connect to proxy server at https://terrain-main-civic-organizing.trycloudflare.com. Make sure it's running.");
-      }
+      // if (!proxyServerAvailable) {
+      //   throw new Error("Cannot connect to proxy server at https://terrain-main-civic-organizing.trycloudflare.com. Make sure it's running.");
+      // }
       
       // Only update credentials if both API key and secret are provided
-      if (apiKey && apiSecret) {
+      if (true) {
         // Send credentials directly to the proxy backend server
         const backendResponse = await fetch('https://terrain-main-civic-organizing.trycloudflare.com/api/register-key', {
           method: 'POST',
