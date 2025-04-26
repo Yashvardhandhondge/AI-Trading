@@ -30,9 +30,10 @@ interface ConnectExchangeModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   userId?: number
+  user?: any;
 }
 
-export function ConnectExchangeModal({ open, onOpenChange,userId }: ConnectExchangeModalProps) {
+export function ConnectExchangeModal({ open, onOpenChange,userId,user }: ConnectExchangeModalProps) {
   const router = useRouter()
   const [exchange, setExchange] = useState<"binance" | "btcc">("binance")
   const [apiKey, setApiKey] = useState("")
@@ -55,32 +56,37 @@ export function ConnectExchangeModal({ open, onOpenChange,userId }: ConnectExcha
     setError(null);
     setShowSuccess(false);
     
-    if (!userId) {
-      setError("User ID is required");
-      setIsLoading(false);
-      return;
-    }
-    
     try {
-      // First, register the API key with the proxy server
-      try {
-        await ProxyTradingService.registerApiKey(
-          userId,
+      // Create a unique identifier if userId isn't available
+      const effectiveUserId = userId || Date.now().toString();
+      
+      console.log("Attempting to connect to proxy server with user ID:", effectiveUserId);
+      
+      // Direct request to your proxy server
+      const response = await fetch('http://localhost:3000/api/register-key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userId: effectiveUserId,
           apiKey,
           apiSecret
-        );
-        
-        logger.info("API key registered with proxy server", {
-          context: "ConnectExchange"
-        });
-      } catch (proxyError) {
-        throw new Error(proxyError instanceof Error ? 
-          proxyError.message : 
-          "Failed to register with proxy server");
+        })
+      });
+      
+      console.log("Proxy server response status:", response.status);
+      
+      const data = await response.json();
+      console.log("Proxy server response data:", data);
+      
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to register API key with proxy");
       }
       
-      // Now update the user's record in your app database (but don't store the actual keys)
-      const response = await fetch("/api/exchange/connect", {
+      // Now update your app database to record that the connection was successful
+      // but without storing the actual keys
+      const appResponse = await fetch("/api/exchange/connect", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -88,41 +94,27 @@ export function ConnectExchangeModal({ open, onOpenChange,userId }: ConnectExcha
         body: JSON.stringify({
           exchange,
           registered: true,
-          // Don't send actual API keys to your server
         }),
       });
       
-      const data = await response.json();
-      
-      if (!response.ok) {
-        logger.error(`Exchange connection failed: ${data.error}`, {
-          context: "ConnectExchange"
-        });
-        
-        throw new Error(data.error || "Failed to connect exchange");
+      if (!appResponse.ok) {
+        const appData = await appResponse.json();
+        throw new Error(appData.error || "Failed to update application database");
       }
       
-      logger.info("Exchange connected successfully", {
-        context: "ConnectExchange",
-        data: { exchange }
-      });
-      
-      // Show success message briefly before closing
+      // Success flow
       setShowSuccess(true);
       setTimeout(() => {
-        // Close the modal
         onOpenChange(false);
-        // Navigate to dashboard
-        router.push("/");
         router.refresh();
       }, 1500);
     } catch (err) {
+      console.error("Connection error:", err);
       setError(err instanceof Error ? err.message : "Failed to connect exchange");
     } finally {
       setIsLoading(false);
     }
   };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
