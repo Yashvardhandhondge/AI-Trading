@@ -50,71 +50,86 @@ export function ConnectExchangeModal({ open, onOpenChange,userId,user }: Connect
     }
   }, [open])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError(null);
-    setShowSuccess(false);
+  // Modified handleSubmit function for components/connect-exchange-modal.tsx
+
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setIsLoading(true);
+  setError(null);
+  setShowSuccess(false);
+  
+  try {
+    // Get a unique identifier for this user
+    const effectiveUserId = userId || user?.id || Date.now().toString();
     
-    try {
-      // Create a unique identifier if userId isn't available
-      const effectiveUserId = userId || Date.now().toString();
-      
-      console.log("Attempting to connect to proxy server with user ID:", effectiveUserId);
-      
-      // Direct request to your proxy server
-      const response = await fetch('http://localhost:3000/api/register-key', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          userId: effectiveUserId,
-          apiKey,
-          apiSecret
-        })
-      });
-      
-      console.log("Proxy server response status:", response.status);
-      
-      const data = await response.json();
-      console.log("Proxy server response data:", data);
-      
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to register API key with proxy");
-      }
-      
-      // Now update your app database to record that the connection was successful
-      // but without storing the actual keys
-      const appResponse = await fetch("/api/exchange/connect", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          exchange,
-          registered: true,
-        }),
-      });
-      
-      if (!appResponse.ok) {
-        const appData = await appResponse.json();
-        throw new Error(appData.error || "Failed to update application database");
-      }
-      
-      // Success flow
-      setShowSuccess(true);
-      setTimeout(() => {
-        onOpenChange(false);
-        router.refresh();
-      }, 1500);
-    } catch (err) {
-      console.error("Connection error:", err);
-      setError(err instanceof Error ? err.message : "Failed to connect exchange");
-    } finally {
-      setIsLoading(false);
+    console.log("Connecting to external backend at http://localhost:3000");
+    
+    // Send credentials directly to your backend server
+    const backendResponse = await fetch('http://localhost:3000/api/register-key', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        userId: effectiveUserId,
+        apiKey,
+        apiSecret,
+        exchange: exchange
+      })
+    });
+    
+    // Check for backend errors
+    if (!backendResponse.ok) {
+      const errorData = await backendResponse.json();
+      throw new Error(errorData.error || "Failed to register with backend server");
     }
-  };
+    
+    const backendData = await backendResponse.json();
+    console.log("Backend registration successful:", backendData);
+    
+    // Now that backend succeeded, update your app's database
+    const response = await fetch("/api/exchange/connect", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        exchange,
+        proxyUserId: effectiveUserId,
+        connected: true
+      }),
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      logger.error(`Exchange connection failed: ${data.error}`, {
+        context: "ConnectExchange"
+      });
+      
+      throw new Error(data.error || "Failed to connect exchange");
+    }
+    
+    logger.info("Exchange connected successfully", {
+      context: "ConnectExchange",
+      data: { exchange }
+    });
+    
+    // Show success message
+    setShowSuccess(true);
+    setTimeout(() => {
+      onOpenChange(false);
+      router.push("/");
+      router.refresh();
+    }, 1500);
+  } catch (err) {
+    console.error("Connection error:", err);
+    setError(err instanceof Error ? err.message : "Failed to connect exchange");
+  } finally {
+    setIsLoading(false);
+  }
+};
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
