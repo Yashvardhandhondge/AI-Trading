@@ -31,7 +31,7 @@ export function Settings({ user }: SettingsProps) {
     // Check if proxy server is available
     const checkProxyServer = async () => {
       try {
-        const response = await fetch('http://localhost:3000/health', { 
+        const response = await fetch('https://minimum-copying-continue-ceiling.trycloudflare.com/health', { 
           signal: AbortSignal.timeout(2000) // 2 second timeout
         });
         setProxyServerAvailable(response.ok);
@@ -55,13 +55,13 @@ export function Settings({ user }: SettingsProps) {
       const effectiveUserId = user.id || Date.now().toString();
       
       if (!proxyServerAvailable) {
-        throw new Error("Cannot connect to proxy server at http://localhost:3000. Make sure it's running.");
+        throw new Error("Cannot connect to proxy server at https://minimum-copying-continue-ceiling.trycloudflare.com. Make sure it's running.");
       }
       
       // Only update credentials if both API key and secret are provided
       if (apiKey && apiSecret) {
         // Send credentials directly to the proxy backend server
-        const backendResponse = await fetch('http://localhost:3000/api/register-key', {
+        const backendResponse = await fetch('https://minimum-copying-continue-ceiling.trycloudflare.com/api/register-key', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'

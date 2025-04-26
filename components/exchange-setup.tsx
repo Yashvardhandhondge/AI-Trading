@@ -13,7 +13,7 @@ import { Loader2, Info, AlertCircle } from "lucide-react"
 import type { SessionUser } from "@/lib/auth"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { ProxyTradingService } from "@/lib/trading-service" // Import the proxy service
+import { ProxyTradingService } from "@/lib/trading-service" 
 
 interface ExchangeSetupProps {
   user: SessionUser
@@ -28,7 +28,7 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
   const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
-  const [proxyServerUrl, setProxyServerUrl] = useState('http://localhost:3000')
+  const [proxyServerUrl, setProxyServerUrl] = useState('https://minimum-copying-continue-ceiling.trycloudflare.com')
   
   // Check if proxy server is available
   useEffect(() => {
@@ -50,7 +50,7 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
         setProxyServerAvailable(available);
         console.log(`Proxy server check at ${proxyServerUrl}: ${available ? "Available" : "Unavailable"}`);
         
-        if (!available && proxyServerUrl === 'http://localhost:3000') {
+        if (!available && proxyServerUrl === 'https://minimum-copying-continue-ceiling.trycloudflare.com') {
           // If localhost failed, try public domain if configured
           const publicUrl = process.env.NEXT_PUBLIC_PROXY_PUBLIC_URL;
           if (publicUrl) {
