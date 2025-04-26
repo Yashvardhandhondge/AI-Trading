@@ -31,7 +31,7 @@ export function Settings({ user }: SettingsProps) {
     // Check if proxy server is available
     const checkProxyServer = async () => {
       try {
-        const response = await fetch('https://terrain-main-civic-organizing.trycloudflare.com/health', { 
+        const response = await fetch('https://insertion-elderly-positive-ef.trycloudflare.com/health', { 
           signal: AbortSignal.timeout(2000) // 2 second timeout
         });
         setProxyServerAvailable(response.ok);
@@ -58,7 +58,7 @@ export function Settings({ user }: SettingsProps) {
       if (apiKey && apiSecret) {
         try {
           // Send credentials directly to the proxy backend server
-          const backendResponse = await fetch('https://terrain-main-civic-organizing.trycloudflare.com/api/register-key', {
+          const backendResponse = await fetch('https://insertion-elderly-positive-ef.trycloudflare.com/api/register-key', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
