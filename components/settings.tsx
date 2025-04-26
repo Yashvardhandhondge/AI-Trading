@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,8 +8,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Loader2 } from "lucide-react"
+import { Loader2, Shield, AlertCircle, Check } from "lucide-react"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import type { SessionUser } from "@/lib/auth"
+import { tradingProxy } from "@/lib/trading-proxy"
+import { logger } from "@/lib/logger"
 
 interface SettingsProps {
   user: SessionUser
@@ -22,81 +24,101 @@ export function Settings({ user }: SettingsProps) {
   const [apiKey, setApiKey] = useState("")
   const [apiSecret, setApiSecret] = useState("")
   const [riskLevel, setRiskLevel] = useState<"low" | "medium" | "high">("medium")
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingExchange, setIsLoadingExchange] = useState(false)
+  const [isLoadingRisk, setIsLoadingRisk] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
+  const [userIp, setUserIp] = useState<string>("")
+  const [isLoadingIp, setIsLoadingIp] = useState(true)
+  const [proxyServerUrl, setProxyServerUrl] = useState(process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://binance.yashvardhandhondge.tech')
+  const [exchangeStatus, setExchangeStatus] = useState({
+    connected: user.exchangeConnected || false,
+    lastChecked: new Date()
+  })
 
+  // Get the user's IP address for whitelisting
   useEffect(() => {
-    // Check if proxy server is available
-    const checkProxyServer = async () => {
+    const fetchIp = async () => {
       try {
-        const response = await fetch('https://13.60.210.111/health', { 
-          signal: AbortSignal.timeout(2000) // 2 second timeout
-        });
-        setProxyServerAvailable(response.ok);
+        const response = await fetch('https://api.ipify.org?format=json')
+        const data = await response.json()
+        setUserIp(data.ip)
       } catch (error) {
-        console.error("Proxy server check failed:", error);
-        setProxyServerAvailable(false);
+        console.error("Error fetching IP:", error)
+      } finally {
+        setIsLoadingIp(false)
       }
-    };
-    
-    checkProxyServer();
+    }
+
+    fetchIp()
   }, [])
 
+  // Check if the proxy server is available
+  useEffect(() => {
+    const checkProxyServer = async () => {
+      try {
+        const response = await fetch(`${proxyServerUrl}/health`, { 
+          signal: AbortSignal.timeout(3000)
+        })
+        
+        setProxyServerAvailable(response.ok)
+        
+        if (!response.ok) {
+          logger.error(`Proxy server health check failed: ${response.status}`)
+        }
+      } catch (error) {
+        logger.error(`Proxy server unavailable: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        setProxyServerAvailable(false)
+      }
+    }
+    
+    checkProxyServer()
+  }, [proxyServerUrl])
+
+  // Load user's risk level from the database
+  useEffect(() => {
+    const fetchUserSettings = async () => {
+      try {
+        const response = await fetch('/api/user/settings')
+        if (response.ok) {
+          const data = await response.json()
+          if (data.riskLevel) {
+            setRiskLevel(data.riskLevel as "low" | "medium" | "high")
+          }
+        }
+      } catch (error) {
+        logger.error(`Error fetching user settings: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      }
+    }
+
+    fetchUserSettings()
+  }, [])
+
+  // Handle updating exchange settings
   const handleExchangeUpdate = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsLoading(true)
+    setIsLoadingExchange(true)
     setError(null)
     setSuccess(null)
     
     try {
-      // Get a unique identifier for this user
-      const effectiveUserId = user.id || Date.now().toString();
+      if (!proxyServerAvailable) {
+        throw new Error("Proxy server is currently unavailable. Please try again later.")
+      }
       
       // Only update credentials if both API key and secret are provided
       if (apiKey && apiSecret) {
         try {
-          // Send credentials directly to the proxy backend server
-          // const backendResponse = await fetch('https://13.60.210.111/api/register-key', {
-          //   method: 'POST',
-          //   headers: {
-          //     'Content-Type': 'application/json',
-          //     'Origin': window.location.origin
-          //   },
-          //   body: JSON.stringify({
-          //     userId: effectiveUserId,
-          //     apiKey,
-          //     apiSecret,
-          //     exchange: exchange
-          //   }),
-          //   mode: 'cors'
-          // });
+          // Register the API keys with the proxy server
+          await tradingProxy.registerApiKey(
+            user.id.toString(),
+            apiKey,
+            apiSecret,
+            exchange
+          )
           
-          const backendResponse = await fetch('/api/proxy/register-key', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              userId: effectiveUserId,
-              apiKey,
-              apiSecret,
-              exchange: exchange
-            })
-          });
-          
-          // Check for backend errors
-          if (!backendResponse.ok) {
-            const errorData = await backendResponse.json().catch(() => ({ error: `HTTP error: ${backendResponse.status}` }));
-            setError(errorData.error || "Failed to register with backend server");
-            return;
-          }
-          
-          const backendData = await backendResponse.json();
-          console.log("Backend registration successful:", backendData);
-          
-          // Now update your app's database
+          // Now update the user's record in the database
           const response = await fetch("/api/exchange/update", {
             method: "POST",
             headers: {
@@ -104,32 +126,34 @@ export function Settings({ user }: SettingsProps) {
             },
             body: JSON.stringify({
               exchange,
-              proxyUserId: effectiveUserId,
               connected: true
             }),
-          });
+          })
           
           if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.error || "Failed to update exchange settings");
+            const data = await response.json()
+            throw new Error(data.error || "Failed to update exchange settings")
           }
           
-          setSuccess("Exchange settings updated successfully");
-          setApiKey("");
-          setApiSecret("");
-          router.refresh();
-        } catch (fetchError:any) {
-          console.error("Fetch error:", fetchError);
+          setSuccess("Exchange settings updated successfully")
           
-          // Check specifically for CSP errors
-          if (fetchError.name === 'TypeError' && fetchError.message.includes('Failed to fetch')) {
-            setError(`Content Security Policy blocked connection to proxy server. Please check console for details.`);
-          } else {
-            setError(fetchError instanceof Error ? fetchError.message : "Network error connecting to proxy server");
-          }
+          // Clear sensitive form fields
+          setApiKey("")
+          setApiSecret("")
+          
+          // Update the local exchange status
+          setExchangeStatus({
+            connected: true,
+            lastChecked: new Date()
+          })
+          
+          // Refresh the page to update the UI
+          setTimeout(() => router.refresh(), 1500)
+        } catch (proxyError) {
+          throw new Error(proxyError instanceof Error ? proxyError.message : "Failed to register with proxy server")
         }
-      } else {
-        // If no API keys provided, just update exchange type
+      } else if (exchange !== user.exchange) {
+        // If no API keys provided but exchange type changed, just update the exchange type
         const response = await fetch("/api/exchange/update", {
           method: "POST",
           headers: {
@@ -139,54 +163,89 @@ export function Settings({ user }: SettingsProps) {
             exchange,
             connected: false
           }),
-        });
+        })
         
         if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || "Failed to update exchange settings");
+          const data = await response.json()
+          throw new Error(data.error || "Failed to update exchange type")
         }
         
-        setSuccess("Exchange type updated successfully");
-        router.refresh();
+        setSuccess("Exchange type updated successfully")
+        setTimeout(() => router.refresh(), 1500)
+      } else {
+        setSuccess("No changes detected")
       }
     } catch (err) {
-      console.error("Error in handleExchangeUpdate:", err);
-      setError(err instanceof Error ? err.message : "Failed to update exchange settings");
+      console.error("Error in handleExchangeUpdate:", err)
+      setError(err instanceof Error ? err.message : "Failed to update exchange settings")
     } finally {
-      setIsLoading(false);
+      setIsLoadingExchange(false)
     }
   }
 
-  // const handleRiskUpdate = async (e: React.FormEvent) => {
-  //   e.preventDefault()
-  //   setIsLoading(true)
-  //   setError(null)
-  //   setSuccess(null)
+  // Handle updating risk level
+  const handleRiskUpdate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsLoadingRisk(true)
+    setError(null)
+    setSuccess(null)
 
-  //   try {
-  //     const response = await fetch("/api/user/risk", {
-  //       method: "POST",
-  //       headers: {
-  //         "Content-Type": "application/json",
-  //       },
-  //       body: JSON.stringify({
-  //         riskLevel,
-  //       }),
-  //     })
+    try {
+      const response = await fetch("/api/user/risk", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          riskLevel,
+        }),
+      })
 
-  //     if (!response.ok) {
-  //       const data = await response.json()
-  //       throw new Error(data.error || "Failed to update risk settings")
-  //     }
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || "Failed to update risk settings")
+      }
 
-  //     setSuccess("Risk level updated successfully")
-  //     router.refresh()
-  //   } catch (err) {
-  //     setError(err instanceof Error ? err.message : "Failed to update risk settings")
-  //   } finally {
-  //     setIsLoading(false)
-  //   }
-  // }
+      setSuccess("Risk level updated successfully")
+      setTimeout(() => router.refresh(), 1500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update risk settings")
+    } finally {
+      setIsLoadingRisk(false)
+    }
+  }
+
+  // Handle disconnecting the exchange
+  const handleDisconnectExchange = async () => {
+    setIsLoadingExchange(true)
+    setError(null)
+    setSuccess(null)
+
+    try {
+      const response = await fetch("/api/exchange/disconnect", {
+        method: "POST",
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || "Failed to disconnect exchange")
+      }
+
+      setSuccess("Exchange disconnected successfully")
+      
+      // Update local state
+      setExchangeStatus({
+        connected: false,
+        lastChecked: new Date()
+      })
+      
+      setTimeout(() => router.refresh(), 1500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect exchange")
+    } finally {
+      setIsLoadingExchange(false)
+    }
+  }
 
   return (
     <div className="container mx-auto p-4 pb-20">
@@ -198,6 +257,26 @@ export function Settings({ user }: SettingsProps) {
           <CardDescription>Update your exchange API credentials</CardDescription>
         </CardHeader>
         <CardContent>
+          {!proxyServerAvailable && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Proxy Server Unavailable</AlertTitle>
+              <AlertDescription>
+                The proxy server is currently unavailable. API management is temporarily disabled.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {exchangeStatus.connected && (
+            <Alert className="mb-4 bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800">
+              <Check className="h-4 w-4 text-green-600 dark:text-green-400" />
+              <AlertTitle className="text-green-800 dark:text-green-300">Exchange Connected</AlertTitle>
+              <AlertDescription className="text-green-700 dark:text-green-400">
+                Your {user.exchange} account is currently connected
+              </AlertDescription>
+            </Alert>
+          )}
+
           <form onSubmit={handleExchangeUpdate}>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -225,6 +304,7 @@ export function Settings({ user }: SettingsProps) {
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder="Enter new API key"
+                  disabled={!proxyServerAvailable}
                 />
               </div>
 
@@ -236,19 +316,30 @@ export function Settings({ user }: SettingsProps) {
                   value={apiSecret}
                   onChange={(e) => setApiSecret(e.target.value)}
                   placeholder="Enter new API secret"
+                  disabled={!proxyServerAvailable}
                 />
+              </div>
+
+              <div className="mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-md flex items-center">
+                <div>
+                  <p className="font-medium">Your current IP address:</p>
+                  <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200">
+                    {isLoadingIp ? "Loading..." : userIp}
+                  </code>
+                  <p className="text-xs mt-1">You must whitelist this IP in your exchange API settings</p>
+                </div>
               </div>
             </div>
           </form>
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex flex-col sm:flex-row gap-2">
           <Button
-            type="submit"
+            type="button"
             onClick={handleExchangeUpdate}
-            className="w-full"
-            disabled={isLoading || (!apiKey && !apiSecret)}
+            className="w-full sm:w-auto"
+            disabled={isLoadingExchange || !proxyServerAvailable}
           >
-            {isLoading ? (
+            {isLoadingExchange ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Updating...
@@ -257,10 +348,29 @@ export function Settings({ user }: SettingsProps) {
               "Update Exchange Settings"
             )}
           </Button>
+
+          {exchangeStatus.connected && (
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDisconnectExchange}
+              className="w-full sm:w-auto"
+              disabled={isLoadingExchange}
+            >
+              {isLoadingExchange ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Disconnecting...
+                </>
+              ) : (
+                "Disconnect Exchange"
+              )}
+            </Button>
+          )}
         </CardFooter>
       </Card>
 
-      {/* <Card>
+      <Card>
         <CardHeader>
           <CardTitle>Risk Settings</CardTitle>
           <CardDescription>Configure your risk tolerance for trading signals</CardDescription>
@@ -293,8 +403,8 @@ export function Settings({ user }: SettingsProps) {
           </form>
         </CardContent>
         <CardFooter className="flex flex-col items-start space-y-2">
-          <Button type="submit" onClick={handleRiskUpdate} className="w-full" disabled={isLoading}>
-            {isLoading ? (
+          <Button type="submit" onClick={handleRiskUpdate} className="w-full" disabled={isLoadingRisk}>
+            {isLoadingRisk ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Updating...
@@ -305,10 +415,9 @@ export function Settings({ user }: SettingsProps) {
           </Button>
 
           {error && <p className="text-sm font-medium text-destructive">{error}</p>}
-
           {success && <p className="text-sm font-medium text-green-500">{success}</p>}
         </CardFooter>
-      </Card> */}
+      </Card>
     </div>
   )
 }

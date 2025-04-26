@@ -13,7 +13,6 @@ import { Loader2, Info, AlertCircle } from "lucide-react"
 import type { SessionUser } from "@/lib/auth"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { ProxyTradingService } from "@/lib/trading-service" 
 
 interface ExchangeSetupProps {
   user: SessionUser

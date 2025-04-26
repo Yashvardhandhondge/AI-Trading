@@ -1,4 +1,5 @@
 "use client"
+
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import {
@@ -16,14 +17,13 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { 
   ArrowRight, 
   Shield, 
-  ChevronRight, 
   Loader2, 
-  Info, 
   AlertCircle,
   Check
 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { logger } from "@/lib/logger"
+import { tradingProxy } from "@/lib/trading-proxy"
 
 interface ConnectExchangeModalProps {
   open: boolean
@@ -41,110 +41,137 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
   const [error, setError] = useState<string | null>(null)
   const [showSuccess, setShowSuccess] = useState(false)
   const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
+  const [userIp, setUserIp] = useState<string>("")
+  const [isLoadingIp, setIsLoadingIp] = useState(true)
 
+  // Get the user's IP address for whitelisting
   useEffect(() => {
-    // Check if proxy server is available
-    const checkProxyServer = async () => {
+    const fetchIp = async () => {
       try {
-        const response = await fetch('https://13.60.210.111/health', { 
-          signal: AbortSignal.timeout(2000) // 2 second timeout
-        });
-        setProxyServerAvailable(response.ok);
+        const response = await fetch('https://api.ipify.org?format=json')
+        const data = await response.json()
+        setUserIp(data.ip)
       } catch (error) {
-        console.error("Proxy server check failed:", error);
-        setProxyServerAvailable(false);
+        console.error("Error fetching IP:", error)
+      } finally {
+        setIsLoadingIp(false)
       }
-    };
-    
+    }
+
+    fetchIp()
+  }, [])
+
+  // Check proxy server availability and reset form state when modal opens
+  useEffect(() => {
     if (open) {
-      checkProxyServer();
       setError(null)
       setShowSuccess(false)
+      setApiKey("")
+      setApiSecret("")
+      checkProxyServer()
     }
   }, [open])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError(null);
-    setShowSuccess(false);
-    
+  // Check if the proxy server is available
+  const checkProxyServer = async () => {
     try {
-      // Get a unique identifier for this user
-      const effectiveUserId = userId || Date.now().toString();
+      const proxyUrl = process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://binance.yashvardhandhondge.tech'
+      const response = await fetch(`${proxyUrl}/health`, { 
+        signal: AbortSignal.timeout(3000)
+      })
       
-      console.log(`Connecting to external backend at https://13.60.210.111 for user ${effectiveUserId}`);
-      
-      if (!proxyServerAvailable) {
-        throw new Error("Cannot connect to proxy server at https://13.60.210.111. Make sure it's running.");
-      }
-      
-      // Send credentials directly to your backend server
-      const backendResponse = await fetch('/api/proxy/register-key', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          userId: effectiveUserId,
-          apiKey,
-          apiSecret,
-          exchange: exchange
-        })
-      });
-      
-      
-      // Check for backend errors
-      if (!backendResponse.ok) {
-        const errorData = await backendResponse.json();
-        throw new Error(errorData.error || "Failed to register with backend server");
-      }
-      
-      const backendData = await backendResponse.json();
-      console.log("Backend registration successful:", backendData);
-      
-      // Now that backend succeeded, update your app's database
-      const response = await fetch("/api/exchange/connect", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          exchange,
-          proxyUserId: effectiveUserId,
-          connected: true
-        }),
-      });
+      setProxyServerAvailable(response.ok)
       
       if (!response.ok) {
-        const data = await response.json();
-        logger.error(`Exchange connection failed: ${data.error}`);
-        
-        throw new Error(data.error || "Failed to connect exchange");
+        logger.error(`Proxy server health check failed: ${response.status}`)
+      }
+    } catch (error) {
+      logger.error(`Proxy server unavailable: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      setProxyServerAvailable(false)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsLoading(true)
+    setError(null)
+    setShowSuccess(false)
+    
+    try {
+      if (!proxyServerAvailable) {
+        throw new Error("Proxy server is not available. Please try again later.")
       }
       
-      logger.info("Exchange connected successfully", {
-        context: "ConnectExchange",
-        data: { exchange }
-      });
+      if (!apiKey || !apiSecret) {
+        throw new Error("API key and secret are required")
+      }
       
-      // Show success message
-      setShowSuccess(true);
-      setTimeout(() => {
-        onOpenChange(false);
-        if (onSuccess) {
-          onSuccess();
-        } else {
-          router.refresh();
+      if (!userId) {
+        throw new Error("User ID is required")
+      }
+      
+      // Use our trading proxy service to register the API key
+      try {
+        // Register API key with the proxy server
+        await tradingProxy.registerApiKey(
+          userId.toString(),
+          apiKey,
+          apiSecret,
+          exchange
+        )
+        
+        // Update the user record in our database to reflect the connected status
+        const response = await fetch("/api/exchange/connect", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            exchange,
+            connected: true
+          }),
+        })
+        
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.error || `Failed to update user record (${response.status})`)
         }
-      }, 1500);
-    } catch (err) {
-      console.error("Connection error:", err);
-      setError(err instanceof Error ? err.message : "Failed to connect exchange");
+        
+        // Show success message
+        setShowSuccess(true)
+        
+        // Clean up sensitive data
+        setApiKey("")
+        setApiSecret("")
+        
+        // Log success
+        logger.info("Exchange connected successfully", {
+          context: "ConnectExchangeModal",
+          userId: userId
+        })
+        
+        // Handle success callback after a delay
+        setTimeout(() => {
+          onOpenChange(false)
+          if (onSuccess) {
+            onSuccess()
+          } else {
+            router.refresh()
+          }
+        }, 1500)
+      } catch (proxyError) {
+        const errorMessage = proxyError instanceof Error ? proxyError.message : "Unknown error"
+        logger.error(`Failed to register API key with proxy: ${errorMessage}`)
+        throw new Error(errorMessage)
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred"
+      setError(errorMessage)
+      logger.error(`Exchange connection error: ${errorMessage}`)
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -161,7 +188,7 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
             <AlertCircle className="h-4 w-4" />
             <AlertTitle className="text-red-800 dark:text-red-300">Proxy Server Not Available</AlertTitle>
             <AlertDescription className="text-red-700 dark:text-red-400">
-              Cannot connect to proxy server at https://13.60.210.111. Please make sure it's running.
+              Cannot connect to proxy server. Please try again later.
             </AlertDescription>
           </Alert>
         )}
@@ -268,17 +295,27 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
                   <li>Enter them in the form above</li>
                 </ol>
                 
+                <div className="mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-md flex items-center">
+                  <div>
+                    <p className="font-medium">Your current IP address:</p>
+                    <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200">
+                      {isLoadingIp ? "Loading..." : userIp}
+                    </code>
+                    <p className="text-xs mt-1">You must whitelist this IP in your exchange API settings</p>
+                  </div>
+                </div>
+                
                 <div className="mt-4 space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <ChevronRight className="h-4 w-4 text-green-500 mr-1 flex-shrink-0" />
+                  <div className="flex items-center">
+                    <div className="h-4 w-4 rounded-full bg-green-500 mr-2 flex-shrink-0"></div>
                     <span>Execute trades directly from signals</span>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <ChevronRight className="h-4 w-4 text-green-500 mr-1 flex-shrink-0" />
+                  <div className="flex items-center">
+                    <div className="h-4 w-4 rounded-full bg-green-500 mr-2 flex-shrink-0"></div>
                     <span>Track your portfolio performance automatically</span>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <ChevronRight className="h-4 w-4 text-green-500 mr-1 flex-shrink-0" />
+                  <div className="flex items-center">
+                    <div className="h-4 w-4 rounded-full bg-green-500 mr-2 flex-shrink-0"></div>
                     <span>Receive SELL signals for tokens you own</span>
                   </div>
                 </div>

@@ -1,7 +1,9 @@
+// app/api/signals/[id]/[action]/route.ts
 import { type NextRequest, NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/auth"
 import { connectToDatabase, models } from "@/lib/db"
-import { ExchangeService } from "@/lib/exchange"
+import { tradingProxy } from "@/lib/trading-proxy"
+import { logger } from "@/lib/logger"
 
 export async function POST(request: NextRequest, { params }: { params: { id: string; action: string } }) {
   try {
@@ -36,6 +38,10 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
     // If action is skip, just return success
     if (action === "skip") {
+      logger.info(`User skipped signal: ${signal.type} for ${signal.token}`, {
+        context: "SignalAction",
+        userId: sessionUser.id
+      })
       return NextResponse.json({ success: true })
     }
 
@@ -47,7 +53,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
       // Check if user has already received a signal for this token in the last 24 hours
       const hasRecentSignal = user.lastSignalTokens.some(
-        (item:any) =>
+        (item: any) =>
           item.token === signal.token &&
           new Date().getTime() - new Date(item.timestamp).getTime() < 24 * 60 * 60 * 1000,
       )
@@ -70,20 +76,13 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
       // For SELL signals, verify user has the token
       if (signal.type === "SELL") {
-        const hasToken = portfolio.holdings.some((h:any) => h.token === signal.token)
+        const hasToken = portfolio.holdings.some((h: any) => h.token === signal.token && h.amount > 0)
         if (!hasToken) {
           return NextResponse.json({ error: "You don't own this token" }, { status: 400 })
         }
       }
 
-      // Rest of the function remains the same...
-      // Initialize exchange service
-      const exchangeService = new ExchangeService(user.exchange, {
-        apiKey: user.apiKey,
-        apiSecret: user.apiSecret,
-      })
-
-      // Calculate trade amount (10% of portfolio for BUY)
+      // Calculate trade amount and parameters
       let amount = 0
       let tradeParams: { symbol: string; side: "BUY" | "SELL"; quantity: number } = {
         symbol: `${signal.token}USDT`,
@@ -105,7 +104,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         }
       } else if (signal.type === "SELL") {
         // Find the holding for this token
-        const holding = portfolio.holdings.find((h:any) => h.token === signal.token)
+        const holding = portfolio.holdings.find((h: any) => h.token === signal.token)
 
         if (!holding || holding.amount <= 0) {
           return NextResponse.json({ error: "No holdings found for this token" }, { status: 400 })
@@ -121,98 +120,131 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         }
       }
 
-      // Execute the trade
-      const tradeResult = await exchangeService.executeTrade(tradeParams)
+      try {
+        // Execute the trade using the trading proxy
+        const tradeResult = await tradingProxy.executeTrade(
+          sessionUser.id,
+          tradeParams.symbol,
+          tradeParams.side,
+          tradeParams.quantity
+        )
 
-      // Create trade record
-      const trade = await models.Trade.create({
-        userId: user._id,
-        signalId: signal._id,
-        type: signal.type,
-        token: signal.token,
-        price: tradeResult.price,
-        amount,
-        status: "completed",
-        createdAt: new Date(),
-      })
-
-      // Update or create cycle
-      if (signal.type === "BUY") {
-        // Create new cycle
-        const cycle = await models.Cycle.create({
+        // Create trade record
+        const trade = await models.Trade.create({
           userId: user._id,
+          signalId: signal._id,
+          type: signal.type,
           token: signal.token,
-          entryTrade: trade._id,
-          state: "entry",
-          entryPrice: tradeResult.price,
-          guidance: "Hold until exit signal or 10% profit",
+          price: tradeResult.price,
+          amount,
+          status: "completed",
           createdAt: new Date(),
-          updatedAt: new Date(),
         })
 
-        // Update trade with cycle ID
-        trade.cycleId = cycle._id
-        await trade.save()
-      } else if (signal.type === "SELL") {
-        // Find active cycle for this token
-        const cycle = await models.Cycle.findOne({
-          userId: user._id,
-          token: signal.token,
-          state: { $in: ["entry", "hold"] },
-        })
-
-        if (cycle) {
-          // Update cycle
-          cycle.exitTrade = trade._id
-          cycle.state = "exit"
-          cycle.exitPrice = tradeResult.price
-          cycle.pnl = (tradeResult.price - cycle.entryPrice) * amount
-          cycle.pnlPercentage = ((tradeResult.price - cycle.entryPrice) / cycle.entryPrice) * 100
-          cycle.guidance = "Cycle completed"
-          cycle.updatedAt = new Date()
-          await cycle.save()
+        // Update or create cycle
+        if (signal.type === "BUY") {
+          // Create new cycle
+          const cycle = await models.Cycle.create({
+            userId: user._id,
+            token: signal.token,
+            entryTrade: trade._id,
+            state: "entry",
+            entryPrice: tradeResult.price,
+            guidance: "Hold until exit signal or 10% profit",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })
 
           // Update trade with cycle ID
           trade.cycleId = cycle._id
           await trade.save()
+        } else if (signal.type === "SELL") {
+          // Find active cycle for this token
+          const cycle = await models.Cycle.findOne({
+            userId: user._id,
+            token: signal.token,
+            state: { $in: ["entry", "hold"] },
+          })
+
+          if (cycle) {
+            // Update cycle
+            cycle.exitTrade = trade._id
+            cycle.state = "exit"
+            cycle.exitPrice = tradeResult.price
+            cycle.pnl = (tradeResult.price - cycle.entryPrice) * amount
+            cycle.pnlPercentage = ((tradeResult.price - cycle.entryPrice) / cycle.entryPrice) * 100
+            cycle.guidance = "Cycle completed"
+            cycle.updatedAt = new Date()
+            await cycle.save()
+
+            // Update trade with cycle ID
+            trade.cycleId = cycle._id
+            await trade.save()
+          }
         }
+
+        // Update user's last signal tokens
+        user.lastSignalTokens.push({
+          token: signal.token,
+          timestamp: new Date(),
+        })
+        await user.save()
+
+        // Update portfolio with fresh data from exchange
+        try {
+          const portfolioData = await tradingProxy.getPortfolio(sessionUser.id)
+          
+          portfolio.totalValue = portfolioData.totalValue
+          portfolio.freeCapital = portfolioData.freeCapital
+          portfolio.allocatedCapital = portfolioData.allocatedCapital
+          portfolio.holdings = portfolioData.holdings
+          portfolio.updatedAt = new Date()
+          await portfolio.save()
+        } catch (portfolioError) {
+          logger.error(`Error updating portfolio after trade: ${portfolioError instanceof Error ? portfolioError : "Unknown error"}`)
+        }
+
+        // Create notification
+        await models.Notification.create({
+          userId: user._id,
+          type: "trade",
+          message: `Executed ${signal.type} for ${signal.token} at ${signal.price}`,
+          relatedId: trade._id,
+          createdAt: new Date(),
+        })
+        
+        logger.info(`Successfully executed ${signal.type} for ${signal.token}`, {
+          context: "SignalAction",
+          userId: sessionUser.id,
+          data: { 
+            token: signal.token, 
+            price: tradeResult.price, 
+            amount 
+          }
+        })
+
+        return NextResponse.json({ success: true, trade })
+      } catch (tradeError) {
+        const errorMessage = tradeError instanceof Error ? tradeError : "Unknown error"
+        logger.error(`Error executing trade: ${errorMessage}`)
+        
+        return NextResponse.json(
+          {
+            error: "Exchange API error. Please check your connection and try again.",
+            details: errorMessage
+          },
+          { status: 503 },
+        )
       }
-
-      // Update user's last signal tokens
-      user.lastSignalTokens.push({
-        token: signal.token,
-        timestamp: new Date(),
-      })
-      await user.save()
-
-      // Update portfolio (real data from exchange)
-      await exchangeService.getPortfolio().then(async (portfolioData) => {
-        portfolio.totalValue = portfolioData.totalValue
-        portfolio.freeCapital = portfolioData.freeCapital
-        portfolio.allocatedCapital = portfolioData.allocatedCapital
-        portfolio.holdings = portfolioData.holdings
-        portfolio.updatedAt = new Date()
-        await portfolio.save()
-      })
-
-      // Create notification
-      await models.Notification.create({
-        userId: user._id,
-        type: "trade",
-        message: `Executed ${signal.type} for ${signal.token} at ${signal.price}`,
-        relatedId: trade._id,
-        createdAt: new Date(),
-      })
-
-      return NextResponse.json({ success: true, trade })
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 })
   } catch (error) {
-    console.error("Error processing signal action:", error)
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    logger.error(`Error processing signal action: ${errorMessage}`)
 
     // Handle specific API errors
-    if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.includes("API")) {
+    if (error instanceof Error && error.message.includes("API")) {
       return NextResponse.json(
         {
           error: "Exchange API error. Please check your connection and try again.",
