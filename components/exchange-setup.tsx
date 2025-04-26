@@ -13,6 +13,7 @@ import { Loader2, Info, AlertCircle } from "lucide-react"
 import type { SessionUser } from "@/lib/auth"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { TradingService } from "@/lib/trading-service"
 
 interface ExchangeSetupProps {
   user: SessionUser
@@ -33,7 +34,11 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
     setError(null)
     
     try {
-      const response = await fetch("/api/exchange/connect", {
+      // Store user ID in localStorage for the trading service to use
+      localStorage.setItem('userId', user.id.toString())
+      
+      // First, register the API keys with the proxy server
+      const response = await fetch(`${TradingService.PROXY_URL}/api/register-key`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -45,9 +50,17 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
         }),
       })
       
+      const data = await response.json()
+      
       if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || "Failed to connect exchange")
+        throw new Error(data.error || "Failed to register API key")
+      }
+      
+      // Test the connection with the trading service
+      const isConnected = await TradingService.testConnection()
+      
+      if (!isConnected) {
+        throw new Error("Failed to connect to exchange API")
       }
       
       // Refresh user data
