@@ -31,7 +31,7 @@ export function Settings({ user }: SettingsProps) {
   const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
   const [userIp, setUserIp] = useState<string>("")
   const [isLoadingIp, setIsLoadingIp] = useState(true)
-  const [proxyServerUrl, setProxyServerUrl] = useState(process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://binance.yashvardhandhondge.tech')
+  const [proxyServerUrl, setProxyServerUrl] = useState('https://binance.yashvardhandhondge.tech')
   const [exchangeStatus, setExchangeStatus] = useState({
     connected: user.exchangeConnected || false,
     lastChecked: new Date()

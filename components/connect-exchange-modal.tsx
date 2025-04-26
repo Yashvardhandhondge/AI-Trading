@@ -75,7 +75,7 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
   // Check if the proxy server is available
   const checkProxyServer = async () => {
     try {
-      const proxyUrl = process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://binance.yashvardhandhondge.tech'
+      const proxyUrl =  'https://binance.yashvardhandhondge.tech'
       const response = await fetch(`${proxyUrl}/health`, { 
         signal: AbortSignal.timeout(3000)
       })

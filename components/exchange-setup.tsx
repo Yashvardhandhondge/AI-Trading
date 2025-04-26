@@ -27,12 +27,12 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
   const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
-  const [proxyServerUrl, setProxyServerUrl] = useState('https://13.60.210.111')
+  const [proxyServerUrl, setProxyServerUrl] = useState('https://binance.yashvardhandhondge.tech')
   
   // Check if proxy server is available
   useEffect(() => {
     // First try to get from environment
-    const configuredUrl = process.env.NEXT_PUBLIC_PROXY_SERVER_URL;
+    const configuredUrl = "https://binance.yashvardhandhondge.tech";
     if (configuredUrl) {
       setProxyServerUrl(configuredUrl);
     }

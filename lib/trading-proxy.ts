@@ -39,7 +39,7 @@ export class TradingProxyService {
    */
   public static getInstance(): TradingProxyService {
     if (!TradingProxyService.instance) {
-      const defaultUrl = process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://binance.yashvardhandhondge.tech';
+      const defaultUrl =  'https://binance.yashvardhandhondge.tech';
       TradingProxyService.instance = new TradingProxyService({ proxyServerUrl: defaultUrl });
     }
     return TradingProxyService.instance;
