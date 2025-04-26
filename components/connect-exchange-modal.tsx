@@ -41,19 +41,40 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
   const [error, setError] = useState<string | null>(null)
   const [showSuccess, setShowSuccess] = useState(false)
   const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
+  const [proxyServerUrl, setProxyServerUrl] = useState('http://13.60.210.111')
 
   useEffect(() => {
     // Check if proxy server is available
     const checkProxyServer = async () => {
-      try {
-        const response = await fetch('https://13.60.210.111/health', { 
-          signal: AbortSignal.timeout(2000) // 2 second timeout
-        });
-        setProxyServerAvailable(response.ok);
-      } catch (error) {
-        console.error("Proxy server check failed:", error);
-        setProxyServerAvailable(false);
+      // Try both HTTP and HTTPS
+      const urls = [
+        'http://13.60.210.111',
+        'https://13.60.210.111',
+        'http://13.60.210.111:3000',
+        'https://13.60.210.111:3000'
+      ];
+      
+      for (const url of urls) {
+        try {
+          console.log(`Trying to connect to ${url}/health`);
+          const response = await fetch(`${url}/health`, { 
+            signal: AbortSignal.timeout(2000), // 2 second timeout
+            mode: 'cors'
+          });
+          
+          if (response.ok) {
+            console.log(`Successfully connected to ${url}`);
+            setProxyServerUrl(url);
+            setProxyServerAvailable(true);
+            break;
+          }
+        } catch (error) {
+          console.error(`Failed to connect to ${url}:`, error);
+        }
       }
+      
+      // If we tried all URLs and none worked
+      setProxyServerAvailable(false);
     };
     
     if (open) {
@@ -73,14 +94,14 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
       // Get a unique identifier for this user
       const effectiveUserId = userId || Date.now().toString();
       
-      console.log(`Connecting to external backend at https://13.60.210.111 for user ${effectiveUserId}`);
+      console.log(`Connecting to external backend at ${proxyServerUrl} for user ${effectiveUserId}`);
       
       if (!proxyServerAvailable) {
-        throw new Error("Cannot connect to proxy server at https://13.60.210.111. Make sure it's running.");
+        throw new Error(`Cannot connect to proxy server at ${proxyServerUrl}. Make sure it's running.`);
       }
       
       // Send credentials directly to your backend server
-      const backendResponse = await fetch('https://13.60.210.111/api/register-key', {
+      const backendResponse = await fetch(`${proxyServerUrl}/api/register-key`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -160,7 +181,7 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
             <AlertCircle className="h-4 w-4" />
             <AlertTitle className="text-red-800 dark:text-red-300">Proxy Server Not Available</AlertTitle>
             <AlertDescription className="text-red-700 dark:text-red-400">
-              Cannot connect to proxy server at https://13.60.210.111. Please make sure it's running.
+              Cannot connect to proxy server at {proxyServerUrl}. Please make sure it's running.
             </AlertDescription>
           </Alert>
         )}

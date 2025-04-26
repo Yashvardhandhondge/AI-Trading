@@ -26,19 +26,39 @@ export function Settings({ user }: SettingsProps) {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [proxyServerAvailable, setProxyServerAvailable] = useState(true)
+  const [proxyServerUrl, setProxyServerUrl] = useState('http://13.60.210.111')
 
   useEffect(() => {
     // Check if proxy server is available
     const checkProxyServer = async () => {
-      try {
-        const response = await fetch('https://13.60.210.111/health', { 
-          signal: AbortSignal.timeout(2000) // 2 second timeout
-        });
-        setProxyServerAvailable(response.ok);
-      } catch (error) {
-        console.error("Proxy server check failed:", error);
-        setProxyServerAvailable(false);
+      // Try both HTTP and HTTPS
+      const urls = [
+        'http://13.60.210.111',
+        'https://13.60.210.111', 
+        'http://13.60.210.111:3000',
+        'https://13.60.210.111:3000'
+      ];
+      
+      for (const url of urls) {
+        try {
+          console.log(`Trying to connect to ${url}/health`);
+          const response = await fetch(`${url}/health`, { 
+            signal: AbortSignal.timeout(2000) // 2 second timeout
+          });
+          
+          if (response.ok) {
+            console.log(`Successfully connected to ${url}`);
+            setProxyServerUrl(url);
+            setProxyServerAvailable(true);
+            return;
+          }
+        } catch (error) {
+          console.error(`Failed to connect to ${url}:`, error);
+        }
       }
+      
+      // If we tried all URLs and none worked
+      setProxyServerAvailable(false);
     };
     
     checkProxyServer();
@@ -58,7 +78,7 @@ export function Settings({ user }: SettingsProps) {
       if (apiKey && apiSecret) {
         try {
           // Send credentials directly to the proxy backend server
-          const backendResponse = await fetch('https://13.60.210.111/api/register-key', {
+          const backendResponse = await fetch(`${proxyServerUrl}/api/register-key`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
