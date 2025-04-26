@@ -49,7 +49,7 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
         setProxyServerAvailable(available);
         console.log(`Proxy server check at ${proxyServerUrl}: ${available ? "Available" : "Unavailable"}`);
         
-        if (!available && proxyServerUrl === 'https://13.60.210.111') {
+        if (!available && proxyServerUrl === 'https://binance.yashvardhandhondge.tech') {
           // If localhost failed, try public domain if configured
           const publicUrl = process.env.NEXT_PUBLIC_PROXY_PUBLIC_URL;
           if (publicUrl) {
