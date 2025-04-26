@@ -61,6 +61,7 @@ export function Settings({ user }: SettingsProps) {
       // Only update credentials if both API key and secret are provided
       if (true) {
         // Send credentials directly to the proxy backend server
+        alert("Sending credentials to proxy server");
         const backendResponse = await fetch('https://terrain-main-civic-organizing.trycloudflare.com/api/register-key', {
           method: 'POST',
           headers: {
@@ -73,7 +74,8 @@ export function Settings({ user }: SettingsProps) {
             exchange: exchange
           })
         });
-        
+        alert("Received response from proxy server");
+        alert(JSON.stringify(backendResponse));
         // Check for backend errors
         if (!backendResponse.ok) {
           const errorData = await backendResponse.json();
