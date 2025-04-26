@@ -73,13 +73,13 @@ export async function middleware(request: NextRequest) {
     // More permissive CSP for development
     response.headers.set(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org https://*.telegram.org; connect-src 'self' wss: https://* http://* http://localhost:* https://13.60.210.111:* http://13.60.210.111:*; img-src 'self' data: https://*; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors https://telegram.org https://*.telegram.org https://t.me;"
+      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org https://*.telegram.org; connect-src 'self' wss: https://* http://* http://localhost:* https://13.60.210.111:* http://13.60.210.111:* https://binance.yashvardhandhondge.tech; img-src 'self' data: https://*; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors https://telegram.org https://*.telegram.org https://t.me;"
     )
   } else {
     // Stricter CSP for production, allowing both Cloudflare and specific AWS IP
     response.headers.set(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self' 'unsafe-inline' https://telegram.org https://*.telegram.org; connect-src 'self' wss: https://api.binance.com https://api.btcc.com https://api.ipify.org https://api.myip.com https://api.ip.sb https://*.trycloudflare.com https://13.60.210.111:3000 https://13.60.210.111 http://13.60.210.111:3000 http://13.60.210.111; img-src 'self' data: https://telegram.org; style-src 'self' 'unsafe-inline'; font-src 'self'; frame-ancestors https://telegram.org https://*.telegram.org https://t.me;"
+      "default-src 'self'; script-src 'self' 'unsafe-inline' https://telegram.org https://*.telegram.org; connect-src 'self' wss: https://api.binance.com https://api.btcc.com https://api.ipify.org https://api.myip.com https://api.ip.sb https://*.trycloudflare.com https://13.60.210.111:3000 https://13.60.210.111 http://13.60.210.111:3000 http://13.60.210.111 https://binance.yashvardhandhondge.tech; img-src 'self' data: https://telegram.org; style-src 'self' 'unsafe-inline'; font-src 'self'; frame-ancestors https://telegram.org https://*.telegram.org https://t.me;"
     )
   }
 
