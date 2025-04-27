@@ -14,9 +14,18 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
 
     const { id, action } = params
+    
+    // Get percentage from request body for partial sells
+    const requestBody = await request.json().catch(() => ({}));
+    const percentage = requestBody.percentage;
 
-    if (!id || !action || !["accept", "skip"].includes(action)) {
+    if (!id || !action || !["accept", "accept-partial", "skip"].includes(action)) {
       return NextResponse.json({ error: "Invalid parameters" }, { status: 400 })
+    }
+    
+    // Validate percentage for partial sell action
+    if (action === "accept-partial" && (!percentage || percentage <= 0 || percentage >= 100)) {
+      return NextResponse.json({ error: "Invalid percentage for partial sell" }, { status: 400 })
     }
 
     // Connect to database
@@ -45,8 +54,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       return NextResponse.json({ success: true })
     }
 
-    // If action is accept, check if user has exchange connected
-    if (action === "accept") {
+    // If action is accept or accept-partial, check if user has exchange connected
+    if (action === "accept" || action === "accept-partial") {
       if (!user.exchangeConnected) {
         return NextResponse.json({ error: "Exchange not connected" }, { status: 400 })
       }
@@ -110,8 +119,27 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           return NextResponse.json({ error: "No holdings found for this token" }, { status: 400 })
         }
 
-        // Sell the entire holding
-        amount = holding.amount
+        // Determine sell amount based on action (full or partial)
+        if (action === "accept-partial" && percentage) {
+          // Calculate partial sell amount
+          amount = holding.amount * (percentage / 100);
+          
+          // Make sure we're not trying to sell more than we have
+          amount = Math.min(amount, holding.amount);
+          
+          logger.info(`Executing partial sell (${percentage}%) for ${signal.token}`, {
+            context: "SignalAction",
+            userId: sessionUser.id,
+            data: { 
+              totalAmount: holding.amount,
+              sellAmount: amount,
+              percentage
+            }
+          });
+        } else {
+          // Sell the entire holding
+          amount = holding.amount;
+        }
 
         tradeParams = {
           symbol: `${signal.token}USDT`,
@@ -167,15 +195,23 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           })
 
           if (cycle) {
-            // Update cycle
-            cycle.exitTrade = trade._id
-            cycle.state = "exit"
-            cycle.exitPrice = tradeResult.price
-            cycle.pnl = (tradeResult.price - cycle.entryPrice) * amount
-            cycle.pnlPercentage = ((tradeResult.price - cycle.entryPrice) / cycle.entryPrice) * 100
-            cycle.guidance = "Cycle completed"
-            cycle.updatedAt = new Date()
-            await cycle.save()
+            // For partial sells, we don't complete the cycle unless specified
+            if (action === "accept-partial") {
+              // Just update the cycle with partial exit info
+              cycle.updatedAt = new Date();
+              cycle.guidance = `Partially sold ${percentage}% of position at ${tradeResult.price}`;
+              await cycle.save();
+            } else {
+              // Full sell - Update cycle to completed state
+              cycle.exitTrade = trade._id;
+              cycle.state = "exit";
+              cycle.exitPrice = tradeResult.price;
+              cycle.pnl = (tradeResult.price - cycle.entryPrice) * amount;
+              cycle.pnlPercentage = ((tradeResult.price - cycle.entryPrice) / cycle.entryPrice) * 100;
+              cycle.guidance = "Cycle completed";
+              cycle.updatedAt = new Date();
+              await cycle.save();
+            }
 
             // Update trade with cycle ID
             trade.cycleId = cycle._id
@@ -208,18 +244,22 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         await models.Notification.create({
           userId: user._id,
           type: "trade",
-          message: `Executed ${signal.type} for ${signal.token} at ${signal.price}`,
+          message: action === "accept-partial" 
+            ? `Executed ${signal.type} for ${percentage}% of ${signal.token} at ${signal.price}` 
+            : `Executed ${signal.type} for ${signal.token} at ${signal.price}`,
           relatedId: trade._id,
           createdAt: new Date(),
         })
         
-        logger.info(`Successfully executed ${signal.type} for ${signal.token}`, {
+        const actionType = action === "accept-partial" ? "partial sell" : signal.type;
+        logger.info(`Successfully executed ${actionType} for ${signal.token}`, {
           context: "SignalAction",
           userId: sessionUser.id,
           data: { 
-            token: signal.token, 
-            price: tradeResult.price, 
-            amount 
+            tradeId: trade._id,
+            amount,
+            partial: action === "accept-partial",
+            percentage: action === "accept-partial" ? percentage : undefined
           }
         })
 

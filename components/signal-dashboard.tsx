@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Loader2, AlertCircle, Bell, ArrowUp, ArrowDown, Info, Clock } from "lucide-react"
 import { SignalCard } from "@/components/signal-card"
@@ -54,6 +54,8 @@ export default function SignalDashboard({
   const [lastNotificationId, setLastNotificationId] = useState<string | null>(null)
   const [notificationPermissionRequested, setNotificationPermissionRequested] = useState(false)
   const [notificationSent, setNotificationSent] = useState(false)
+  const [positionAccumulation, setPositionAccumulation] = useState<Record<string, number>>({})
+  // Track how many times we've bought a token to calculate accumulated percentage
   
   // Get socket from store
   const { socket } = useSocketStore()
@@ -138,6 +140,17 @@ export default function SignalDashboard({
   useEffect(() => {
     fetchSignals()
     fetchUnreadNotifications()
+    
+    // Load position accumulation data from localStorage
+    try {
+      const storedAccumulation = localStorage.getItem('positionAccumulation')
+      if (storedAccumulation) {
+        const accumulation = JSON.parse(storedAccumulation)
+        setPositionAccumulation(accumulation)
+      }
+    } catch (e) {
+      console.error("Failed to load position accumulation from localStorage:", e)
+    }
     
     // Refresh signals every 2 minutes
     const signalIntervalId = setInterval(fetchSignals, 120000)
@@ -372,16 +385,16 @@ export default function SignalDashboard({
     }
   }, [notificationPermissionRequested])
 
-  const handleSignalAction = async (action: "accept" | "skip", signalId: string) => {
+  const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => {
     try {
       // If user tries to accept a signal but has no exchange connected, show modal
-      if (action === "accept" && !isExchangeConnected) {
+      if ((action === "accept" || action === "accept-partial") && !isExchangeConnected) {
         setShowConnectExchangeModal(true)
         return
       }
       
       // For SELL signals, verify the user actually owns the token
-      if (activeSignal?.type === "SELL" && action === "accept") {
+      if (activeSignal?.type === "SELL" && (action === "accept" || action === "accept-partial")) {
         const hasToken = userHoldings.some(h => h.token === activeSignal.token && h.amount > 0)
         if (!hasToken) {
           logger.error(`Cannot execute SELL for ${activeSignal.token} - user doesn't own this token`)
@@ -402,7 +415,7 @@ export default function SignalDashboard({
       }
       
       // For Accept signals, execute the trade via proxy
-      if (action === "accept" && isExchangeConnected && activeSignal) {
+      if ((action === "accept" || action === "accept-partial") && isExchangeConnected && activeSignal) {
         try {
           setIsLoading(true)
           
@@ -426,18 +439,40 @@ export default function SignalDashboard({
               quantity
             )
             
+            // Update position accumulation for this token
+            // Increment by 10% each time (for multiple buys tracking)
+            setPositionAccumulation(prev => {
+              const currentPercentage = prev[activeSignal.token] || 0;
+              return {
+                ...prev,
+                [activeSignal.token]: currentPercentage + 10
+              };
+            });
+            
+            // Store accumulated percentage in localStorage to persist between sessions
+            try {
+              const storedAccumulation = localStorage.getItem('positionAccumulation');
+              const accumulation = storedAccumulation ? JSON.parse(storedAccumulation) : {};
+              accumulation[activeSignal.token] = (accumulation[activeSignal.token] || 0) + 10;
+              localStorage.setItem('positionAccumulation', JSON.stringify(accumulation));
+            } catch (e) {
+              // Ignore localStorage errors
+              console.error("Failed to store position accumulation in localStorage:", e);
+            }
+            
             logger.info(`Successfully executed BUY for ${activeSignal.token}`, {
               context: "SignalDashboard",
               userId,
               data: { quantity, value: tradeValue }
             })
             
-            // Show success toast
+            // Show success toast with accumulation info
+            const newAccumulatedPercentage = (positionAccumulation[activeSignal.token] || 0) + 10;
             toast.success(`Successfully bought ${activeSignal.token}`, {
-              description: `Bought ${quantity.toFixed(6)} ${activeSignal.token} at $${activeSignal.price}`
+              description: `Bought ${quantity.toFixed(6)} ${activeSignal.token} at $${activeSignal.price} (Total position: ${newAccumulatedPercentage}%)`
             })
           } 
-          // For SELL signals, sell the entire holding
+          // For SELL signals, sell entire or partial holding based on action
           else if (activeSignal.type === "SELL") {
             // Find the token in holdings
             const holding = userHoldings.find(h => h.token === activeSignal.token)
@@ -446,29 +481,85 @@ export default function SignalDashboard({
               throw new Error(`No ${activeSignal.token} holdings found`)
             }
             
+            // Calculate sell amount (either full or partial based on action)
+            const sellAmount = action === "accept-partial" && percentage 
+              ? holding.amount * (percentage / 100) 
+              : holding.amount;
+            
             // Execute sell order
             await tradingProxy.executeTrade(
               userId,
               `${activeSignal.token}USDT`,
               "SELL",
-              holding.amount
+              sellAmount
             )
+            
+            // If selling partially, update position accumulation
+            if (action === "accept-partial" && percentage) {
+              const remainingPercentage = positionAccumulation[activeSignal.token] || 0;
+              if (remainingPercentage > 0) {
+                const newPercentage = Math.max(0, remainingPercentage - (remainingPercentage * (percentage / 100)));
+                setPositionAccumulation(prev => ({
+                  ...prev,
+                  [activeSignal.token]: newPercentage
+                }));
+                
+                // Update localStorage
+                try {
+                  const storedAccumulation = localStorage.getItem('positionAccumulation');
+                  const accumulation = storedAccumulation ? JSON.parse(storedAccumulation) : {};
+                  accumulation[activeSignal.token] = newPercentage;
+                  localStorage.setItem('positionAccumulation', JSON.stringify(accumulation));
+                } catch (e) {
+                  console.error("Failed to update position accumulation in localStorage:", e);
+                }
+              }
+            } else {
+              // If selling fully, reset the position accumulation for this token
+              setPositionAccumulation(prev => {
+                const newAccumulation = { ...prev };
+                delete newAccumulation[activeSignal.token];
+                return newAccumulation;
+              });
+              
+              // Update localStorage
+              try {
+                const storedAccumulation = localStorage.getItem('positionAccumulation');
+                if (storedAccumulation) {
+                  const accumulation = JSON.parse(storedAccumulation);
+                  delete accumulation[activeSignal.token];
+                  localStorage.setItem('positionAccumulation', JSON.stringify(accumulation));
+                }
+              } catch (e) {
+                console.error("Failed to update position accumulation in localStorage:", e);
+              }
+            }
             
             logger.info(`Successfully executed SELL for ${activeSignal.token}`, {
               context: "SignalDashboard",
               userId,
-              data: { amount: holding.amount }
+              data: { 
+                amount: sellAmount,
+                percentage: action === "accept-partial" ? percentage : 100
+              }
             })
             
             // Show success toast
-            toast.success(`Successfully sold ${activeSignal.token}`, {
-              description: `Sold ${holding.amount.toFixed(6)} ${activeSignal.token} at $${activeSignal.price}`
+            const sellType = action === "accept-partial" ? `${percentage}%` : "all";
+            toast.success(`Successfully sold ${sellType} of ${activeSignal.token}`, {
+              description: `Sold ${sellAmount.toFixed(6)} ${activeSignal.token} at $${activeSignal.price}`
             })
           }
           
           // Record the signal as processed in our database
           await fetch(`/api/signals/${signalId}/${action}`, {
-            method: "POST"
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ 
+              percentage: percentage // Include percentage parameter for partial sells
+            })
           })
           
           // Clear the signal and fetch a new one if available
@@ -576,6 +667,7 @@ export default function SignalDashboard({
           onAction={handleSignalAction} 
           exchangeConnected={isExchangeConnected}
           userOwnsToken={userOwnsToken}
+          accumulatedPercentage={positionAccumulation[activeSignal.token] || 0}
         />
       ) : (
         <Card className="mb-6">
