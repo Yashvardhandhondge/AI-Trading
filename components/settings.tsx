@@ -320,13 +320,27 @@ export function Settings({ user }: SettingsProps) {
                 />
               </div>
 
-              <div className="mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-md flex items-center">
+              <div className="mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-md">
                 <div>
-                  <p className="font-medium">Your current IP address:</p>
-                  <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200">
-                    {isLoadingIp ? "Loading..." : userIp}
-                  </code>
-                  <p className="text-xs mt-1">You must whitelist this IP in your exchange API settings</p>
+                  <p className="font-medium">Important: Whitelist BOTH these IP addresses:</p>
+                  <div className="mt-2 space-y-2">
+                    <div>
+                      <p className="text-sm font-medium">1. Your current IP address:</p>
+                      <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200">
+                        {isLoadingIp ? "Loading..." : userIp}
+                      </code>
+                    </div>
+                    
+                    <div>
+                      <p className="text-sm font-medium">2. Our server IP address:</p>
+                      <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200">
+                        13.60.210.111
+                      </code>
+                    </div>
+                  </div>
+                  <p className="text-xs mt-2 text-blue-700 dark:text-blue-300">
+                    <strong>Note:</strong> Both IP addresses must be added to your exchange API whitelist settings for the application to work correctly
+                  </p>
                 </div>
               </div>
             </div>
