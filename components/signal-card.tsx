@@ -8,6 +8,9 @@ import { Progress } from "@/components/ui/progress"
 import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle, ExternalLink, Check, X, Info, AlertCircle } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip" 
+import { telegramService } from "@/lib/telegram-service" 
+import { toast } from "sonner"
+import { logger } from "@/lib/logger"
 
 interface Signal {
   id: string
@@ -35,6 +38,8 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
+  // To avoid duplicate notifications
+  const [notificationsSent, setNotificationsSent] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     // Calculate time left
@@ -43,7 +48,11 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
       const now = new Date().getTime()
       const difference = expiresAt - now
 
-      setTimeLeft(Math.max(0, Math.floor(difference / 1000)))
+      const secondsLeft = Math.max(0, Math.floor(difference / 1000))
+      setTimeLeft(secondsLeft)
+      
+      // Notifications at specific time thresholds
+      handleTimeThresholdNotifications(secondsLeft)
     }
 
     calculateTimeLeft()
@@ -51,6 +60,64 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
 
     return () => clearInterval(timer)
   }, [signal])
+  
+  // Handle notifications at specific time thresholds
+  const handleTimeThresholdNotifications = (secondsLeft: number) => {
+    // Only show notifications if exchange is connected
+    if (!exchangeConnected) return
+    
+    // Notification thresholds in seconds
+    const thresholds = [300, 180, 60, 30];
+    
+    // Find the closest threshold that matches our current time
+    const threshold = thresholds.find(t => secondsLeft <= t + 1 && secondsLeft >= t - 1);
+    
+    if (threshold && !notificationsSent.has(threshold)) {
+      // Mark this threshold as notified
+      setNotificationsSent(prev => {
+        const updated = new Set(prev);
+        updated.add(threshold);
+        return updated;
+      });
+      
+      // Format the time for display
+      const timeDisplay = threshold >= 60 ? 
+        `${Math.floor(threshold / 60)} minute${Math.floor(threshold / 60) !== 1 ? 's' : ''}` : 
+        `${threshold} seconds`;
+      
+      // Show toast notification
+      toast.warning(`${signal.type} signal expires in ${timeDisplay}`, {
+        description: `Auto-execution will occur if no action is taken`,
+        duration: 10000, // 10 seconds
+      });
+      
+      // Try Telegram notification
+      try {
+        // Trigger haptic feedback
+        telegramService.triggerHapticFeedback('notification');
+        
+        // Show popup for important thresholds (5 min and 1 min)
+        if (threshold === 300 || threshold === 60) {
+          telegramService.showPopup(
+            `⚠️ ${signal.type} signal for ${signal.token} expires in ${timeDisplay}.\n\nAuto-execution will occur if no action is taken.`,
+            [{ type: "default", text: "View Signal" }],
+            () => {
+              // Scroll to the signal card
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          );
+        }
+      } catch (error) {
+        logger.error(`Error sending threshold notification: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+    
+    // Special handling for the very last seconds
+    if (secondsLeft <= 5 && secondsLeft > 0) {
+      // Trigger haptic feedback for the last 5 seconds
+      telegramService.triggerHapticFeedback('impact');
+    }
+  }
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -64,6 +131,13 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
 
     try {
       await onAction(action, signal.id)
+      
+      // Trigger appropriate haptic feedback
+      if (action === "accept") {
+        telegramService.triggerHapticFeedback('notification');
+      } else {
+        telegramService.triggerHapticFeedback('selection');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to process action")
     } finally {

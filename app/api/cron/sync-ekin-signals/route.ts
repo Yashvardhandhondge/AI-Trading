@@ -46,11 +46,7 @@ export async function POST() {
             riskLevel: appSignal.riskLevel,
           })
 
-          logger.info(`Found ${eligibleUsers.length} users matching risk level ${appSignal.riskLevel} for BUY signal`, {
-            context: "CronJob",
-            signalType: "BUY",
-            token: appSignal.token
-          })
+          logger.info(`Found ${eligibleUsers.length} users matching risk level ${appSignal.riskLevel} for BUY signal`)
 
           for (const user of eligibleUsers) {
             // Check if user has already received a signal for this token in the last 24 hours
@@ -84,11 +80,7 @@ export async function POST() {
           // Only find users who have exchange connected - they're the only ones who can own tokens
           const usersWithConnectedExchange = await models.User.find({ exchangeConnected: true })
           
-          logger.info(`Processing SELL signal for ${appSignal.token} - checking ${usersWithConnectedExchange.length} users with connected exchanges`, {
-            context: "CronJob",
-            signalType: "SELL",
-            token: appSignal.token
-          })
+          logger.info(`Processing SELL signal for ${appSignal.token} - checking ${usersWithConnectedExchange.length} users with connected exchanges`)
 
           let notifiedUsers = 0;
           for (const user of usersWithConnectedExchange) {
@@ -139,11 +131,7 @@ export async function POST() {
             }
           }
           
-          logger.info(`Notified ${notifiedUsers} users about SELL signal for ${appSignal.token}`, {
-            context: "CronJob",
-            signalType: "SELL",
-            token: appSignal.token
-          })
+          logger.info(`Notified ${notifiedUsers} users about SELL signal for ${appSignal.token}`)
         }
       } else {
         results.push({

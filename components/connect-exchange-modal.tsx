@@ -167,19 +167,13 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
         }, 1500)
       } catch (proxyError) {
         const errorMessage = proxyError instanceof Error ? proxyError.message : "Unknown error"
-        logger.error(`Failed to register API key with proxy: ${errorMessage}`, {
-          context: "ConnectExchangeModal",
-          userId: userId
-        })
+        logger.error(`Failed to register API key with proxy: ${errorMessage}`)
         throw new Error(errorMessage)
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred"
       setError(errorMessage)
-      logger.error(`Exchange connection error: ${errorMessage}`, {
-        context: "ConnectExchangeModal",
-        userId: userId
-      })
+      logger.error(`Exchange connection error: ${errorMessage}`)
     } finally {
       setIsLoading(false)
     }

@@ -2,11 +2,15 @@
 
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Loader2, AlertCircle } from "lucide-react"
+import { Loader2, AlertCircle, Bell } from "lucide-react"
 import { SignalCard } from "@/components/signal-card"
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { logger } from "@/lib/logger"
 import { tradingProxy } from "@/lib/trading-proxy"
+import { toast } from "sonner"
 
 // Define types
 interface Signal {
@@ -43,6 +47,8 @@ export default function SignalDashboard({
   const [activeSignal, setActiveSignal] = useState<Signal | null>(null)
   const [showConnectExchangeModal, setShowConnectExchangeModal] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [unreadNotifications, setUnreadNotifications] = useState<number>(0)
+  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date())
 
   const fetchSignals = async () => {
     try {
@@ -63,10 +69,38 @@ export default function SignalDashboard({
           context: "SignalDashboard",
           userId
         })
+        
+        // Check if this is a new signal (different from what we already have)
+        const isNewSignal = !activeSignal || activeSignal.id !== data.signal.id
+        
+        if (isNewSignal) {
+          // Show a toast notification for new signals
+          toast(`New ${data.signal.type} signal for ${data.signal.token} at $${data.signal.price}`, {
+            duration: 10000, // 10 seconds
+            action: {
+              label: "View",
+              onClick: () => {
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+              }
+            }
+          })
+          
+          // Try Telegram's native notification if available
+          if (window.Telegram?.WebApp) {
+            try {
+              window.Telegram.WebApp.HapticFeedback.notificationOccurred('success')
+            } catch (e) {
+              console.error("Error with Telegram haptic feedback:", e)
+            }
+          }
+        }
+        
         setActiveSignal(data.signal)
       } else {
         setActiveSignal(null)
       }
+      
+      setLastRefreshed(new Date())
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch signals")
       logger.error("Error fetching signals:", err instanceof Error ? err : new Error(String(err)), {
@@ -78,13 +112,34 @@ export default function SignalDashboard({
     }
   }
 
+  const fetchUnreadNotifications = async () => {
+    try {
+      const response = await fetch("/api/notifications/unread")
+      if (response.ok) {
+        const data = await response.json()
+        if (data.notifications) {
+          setUnreadNotifications(data.notifications.length)
+        }
+      }
+    } catch (error) {
+      logger.error("Error fetching unread notifications count:", error instanceof Error ? error : new Error(String(error)))
+    }
+  }
+
   useEffect(() => {
     fetchSignals()
+    fetchUnreadNotifications()
     
     // Refresh signals every 2 minutes
-    const intervalId = setInterval(fetchSignals, 120000)
+    const signalIntervalId = setInterval(fetchSignals, 120000)
     
-    return () => clearInterval(intervalId)
+    // Refresh notification count more frequently
+    const notificationIntervalId = setInterval(fetchUnreadNotifications, 30000)
+    
+    return () => {
+      clearInterval(signalIntervalId)
+      clearInterval(notificationIntervalId)
+    }
   }, [userId])
 
   const handleSignalAction = async (action: "accept" | "skip", signalId: string) => {
@@ -146,6 +201,11 @@ export default function SignalDashboard({
               userId,
               data: { quantity, value: tradeValue }
             })
+            
+            // Show success toast
+            toast.success(`Successfully bought ${activeSignal.token}`, {
+              description: `Bought ${quantity.toFixed(6)} ${activeSignal.token} at $${activeSignal.price}`
+            })
           } 
           // For SELL signals, sell the entire holding
           else if (activeSignal.type === "SELL") {
@@ -169,6 +229,11 @@ export default function SignalDashboard({
               userId,
               data: { amount: holding.amount }
             })
+            
+            // Show success toast
+            toast.success(`Successfully sold ${activeSignal.token}`, {
+              description: `Sold ${holding.amount.toFixed(6)} ${activeSignal.token} at $${activeSignal.price}`
+            })
           }
           
           // Record the signal as processed in our database
@@ -184,6 +249,11 @@ export default function SignalDashboard({
           const errorMessage = tradeError instanceof Error ? tradeError.message : "Failed to execute trade"
           logger.error(`Trade execution failed: ${errorMessage}`)
           setError(errorMessage)
+          
+          // Show error toast
+          toast.error("Trade execution failed", {
+            description: errorMessage
+          })
         } finally {
           setIsLoading(false)
         }
@@ -214,6 +284,14 @@ export default function SignalDashboard({
     userHoldings.some(h => h.token === activeSignal.token && h.amount > 0) : 
     false
 
+  // Calculate the time since last refresh
+  const timeSinceRefresh = Math.floor((new Date().getTime() - lastRefreshed.getTime()) / 1000)
+
+  const handleManualRefresh = () => {
+    fetchSignals()
+    fetchUnreadNotifications()
+  }
+
   if (isLoading) {
     return (
       <div className="flex justify-center items-center p-8">
@@ -227,9 +305,13 @@ export default function SignalDashboard({
     return (
       <Card className="mb-6">
         <CardContent className="p-6">
-          <div className="flex items-center text-destructive">
-            <AlertCircle className="h-5 w-5 mr-2" />
-            <p>Error loading signals: {error}</p>
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>Error loading signals: {error}</AlertDescription>
+          </Alert>
+          <div className="mt-4 flex justify-center">
+            <Button onClick={handleManualRefresh}>Retry</Button>
           </div>
         </CardContent>
       </Card>
@@ -238,6 +320,26 @@ export default function SignalDashboard({
 
   return (
     <div className="space-y-4">
+      {/* Signal refresh info bar */}
+      <div className="flex justify-between items-center mb-2 px-1">
+        <div className="flex items-center text-sm text-muted-foreground">
+          <span>Last checked: {timeSinceRefresh < 60 ? `${timeSinceRefresh}s ago` : `${Math.floor(timeSinceRefresh/60)}m ago`}</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          {unreadNotifications > 0 && (
+            <div className="flex items-center">
+              <Bell className="h-4 w-4 mr-1 text-blue-500" />
+              <Badge variant="outline" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">
+                {unreadNotifications}
+              </Badge>
+            </div>
+          )}
+          <Button variant="ghost" size="sm" onClick={handleManualRefresh} className="h-8 px-2">
+            Refresh
+          </Button>
+        </div>
+      </div>
+      
       {activeSignal && shouldDisplaySignal() ? (
         <SignalCard 
           signal={activeSignal} 
@@ -249,6 +351,9 @@ export default function SignalDashboard({
         <Card className="mb-6">
           <CardContent className="p-6 text-center">
             <p className="text-muted-foreground">No active signals at the moment</p>
+            <p className="text-sm text-muted-foreground mt-2">
+              We'll notify you when new signals are available
+            </p>
           </CardContent>
         </Card>
       )}

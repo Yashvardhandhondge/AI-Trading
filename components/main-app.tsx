@@ -9,17 +9,39 @@ import { Leaderboard } from "@/components/leaderboard"
 import { Settings } from "@/components/settings"
 import { ExchangeSetup } from "@/components/exchange-setup"
 import { OnboardingTutorial } from "@/components/onboarding-tutorial"
+import { NotificationBanner } from "@/components/notification-banner"
+import { NotificationsPage } from "@/components/notifications-page"
+import { Badge } from "@/components/ui/badge"
+import { Bell } from "lucide-react"
 import { useSocketStore } from "@/lib/socket-client"
 import type { SessionUser } from "@/lib/auth"
 import { logger } from "@/lib/logger"
+import { toast } from "sonner"
+import { telegramService } from "@/lib/telegram-service"
 
 export function MainApp() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [activeTab, setActiveTab] = useState("dashboard")
   const [isLoading, setIsLoading] = useState(true)
   const [showOnboarding, setShowOnboarding] = useState(false)
+  const [unreadNotifications, setUnreadNotifications] = useState(0)
   const router = useRouter()
   const { connect, disconnect, socket } = useSocketStore()
+
+  // Check for unread notifications
+  const checkUnreadNotifications = async () => {
+    try {
+      const response = await fetch("/api/notifications/unread")
+      if (response.ok) {
+        const data = await response.json()
+        if (data.notifications) {
+          setUnreadNotifications(data.notifications.length)
+        }
+      }
+    } catch (error) {
+      logger.error(`Error checking unread notifications: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
 
   useEffect(() => {
     // Fetch user data
@@ -67,9 +89,16 @@ export function MainApp() {
 
     initSocket()
 
+    // Check for notifications
+    checkUnreadNotifications()
+    
+    // Set up polling for notifications
+    const notificationInterval = setInterval(checkUnreadNotifications, 30000)
+
     // Cleanup on unmount
     return () => {
       disconnect()
+      clearInterval(notificationInterval)
     }
   }, [router, disconnect])
 
@@ -78,13 +107,69 @@ export function MainApp() {
     if (user) {
       connect(user.id.toString())
       logger.info("Socket connected for user", { context: "MainApp", userId: user.id })
+      
+      // Setup socket event listeners for notifications
+      if (socket) {
+        socket.on("new-signal", (signal) => {
+          // Show toast notification when a new signal arrives via socket
+          toast(`New ${signal.type} signal for ${signal.token}`, {
+            action: {
+              label: "View",
+              onClick: () => {
+                setActiveTab("dashboard")
+              }
+            }
+          })
+          
+          // Increment unread count
+          setUnreadNotifications(prev => prev + 1)
+          
+          // Try to use Telegram's native notification if available
+          telegramService.triggerHapticFeedback('notification')
+          telegramService.showPopup(
+            `🔔 New ${signal.type} signal for ${signal.token} at ${signal.price}`,
+            [{ type: "default", text: "View Signal" }],
+            () => {
+              setActiveTab("dashboard")
+            }
+          )
+        })
+        
+        // Listen for notification events
+        socket.on("notification", (notification) => {
+          if (!notification.read) {
+            // Increment unread count
+            setUnreadNotifications(prev => prev + 1)
+            
+            // Show toast
+            toast(notification.message, {
+              action: {
+                label: "View",
+                onClick: () => {
+                  setActiveTab("notifications")
+                }
+              }
+            })
+          }
+        })
+      }
     }
-  }, [user, connect])
+  }, [user, connect, socket])
 
   // Handle onboarding completion
   const handleOnboardingComplete = () => {
     setShowOnboarding(false)
     logger.info("Onboarding completed", { context: "MainApp", userId: user?.id })
+  }
+
+  // Handle tab change
+  const handleTabChange = (value: string) => {
+    setActiveTab(value)
+    
+    // If switching to notifications tab, reset the unread count
+    if (value === "notifications") {
+      setUnreadNotifications(0)
+    }
   }
 
   if (isLoading) {
@@ -106,12 +191,18 @@ export function MainApp() {
   return (
     <>
       <div className="telegram-app">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full flex-1 flex flex-col">
+        {/* Add NotificationBanner at the top level so it can appear regardless of tab */}
+        <NotificationBanner userId={user.id} />
+        
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full flex-1 flex flex-col">
           <TabsContent value="dashboard" className="flex-1 p-0">
             <Dashboard user={user} socket={socket} />
           </TabsContent>
           <TabsContent value="portfolio" className="flex-1 p-0">
             <Portfolio user={user} socket={socket} />
+          </TabsContent>
+          <TabsContent value="notifications" className="flex-1 p-0">
+            <NotificationsPage userId={user.id} />
           </TabsContent>
           <TabsContent value="leaderboard" className="flex-1 p-0">
             <Leaderboard />
@@ -124,9 +215,17 @@ export function MainApp() {
             )}
           </TabsContent>
 
-          <TabsList className="grid grid-cols-4 h-16 fixed bottom-0 left-0 right-0 rounded-none border-t">
+          <TabsList className="grid grid-cols-5 h-16 fixed bottom-0 left-0 right-0 rounded-none border-t">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
+            <TabsTrigger value="notifications" className="relative">
+              Notifications
+              {unreadNotifications > 0 && (
+                <Badge className="absolute -top-2 -right-2 bg-red-500 text-white h-5 min-w-5 flex items-center justify-center p-0 text-xs">
+                  {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                </Badge>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
