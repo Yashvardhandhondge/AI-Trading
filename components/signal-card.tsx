@@ -28,16 +28,24 @@ interface Signal {
 
 interface SignalCardProps {
   signal: Signal
-  onAction: (action: "accept" | "skip", signalId: string) => void
+  onAction: (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => void
   exchangeConnected: boolean
   userOwnsToken?: boolean
+  accumulatedPercentage?: number
 }
 
-export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken = false }: SignalCardProps) {
+export function SignalCard({ 
+  signal, 
+  onAction, 
+  exchangeConnected, 
+  userOwnsToken = false,
+  accumulatedPercentage = 0 
+}: SignalCardProps) {
   const [timeLeft, setTimeLeft] = useState<number>(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
+  const [actionType, setActionType] = useState<"full" | "partial" | "skip" | null>(null)
   // To avoid duplicate notifications
   const [notificationsSent, setNotificationsSent] = useState<Set<number>>(new Set())
 
@@ -125,15 +133,16 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
     return `${mins}:${secs.toString().padStart(2, "0")}`
   }
 
-  const handleAction = async (action: "accept" | "skip") => {
+  const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number) => {
     setIsLoading(true)
     setError(null)
+    setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip")
 
     try {
-      await onAction(action, signal.id)
+      await onAction(action, signal.id, percentage)
       
       // Trigger appropriate haptic feedback
-      if (action === "accept") {
+      if (action === "accept" || action === "accept-partial") {
         telegramService.triggerHapticFeedback('notification');
       } else {
         telegramService.triggerHapticFeedback('selection');
@@ -142,6 +151,7 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
       setError(err instanceof Error ? err.message : "Failed to process action")
     } finally {
       setIsLoading(false)
+      setActionType(null)
     }
   }
 
@@ -198,6 +208,26 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
             </p>
           </div>
         </div>
+
+        {/* Position accumulation indicator for BUY signals */}
+        {signal.type === "BUY" && accumulatedPercentage > 0 && (
+          <div className="mt-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-md">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm font-medium text-green-800 dark:text-green-300">Position Built:</span>
+              <span className="text-sm font-bold text-green-800 dark:text-green-300">{accumulatedPercentage}%</span>
+            </div>
+            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+              <div 
+                className="bg-green-500 h-2.5 rounded-full" 
+                style={{ width: `${Math.min(accumulatedPercentage, 100)}%` }}
+              ></div>
+            </div>
+            <p className="mt-2 text-xs text-green-700 dark:text-green-400">
+              You've bought {accumulatedPercentage}% of your portfolio in {signal.token}. 
+              You can click "Buy 10%" multiple times to build a larger position.
+            </p>
+          </div>
+        )}
 
         {/* Ekin API specific data */}
         {((signal.positives ?? []).length > 0 || (signal.warnings ?? []).length > 0) && (
@@ -324,48 +354,73 @@ export function SignalCard({ signal, onAction, exchangeConnected, userOwnsToken 
                       onClick={() => handleAction("accept")}
                       disabled={isLoading}
                     >
-                      {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      {isLoading && actionType === "full" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                       {exchangeConnected ? "Buy 10%" : "Connect Exchange"}
                     </Button>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
                   {exchangeConnected 
-                    ? "Purchase 10% of your total portfolio size" 
+                    ? "Purchase 10% of your total portfolio size. Click multiple times to build a larger position." 
                     : "Connect your exchange to execute trades"}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
             <Button variant="outline" className="flex-1" onClick={() => handleAction("skip")} disabled={isLoading}>
+              {isLoading && actionType === "skip" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Skip
             </Button>
           </>
         ) : (
-          <>
+          <div className="grid grid-cols-2 gap-2 w-full">
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex-1 mr-2">
-                    <Button
-                      variant="default"
-                      className="w-full"
-                      onClick={() => handleAction("accept")}
-                      disabled={isLoading}
-                    >
-                      {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                      Sell Fully
-                    </Button>
-                  </div>
+                  <Button
+                    variant="default"
+                    className="w-full"
+                    onClick={() => handleAction("accept")}
+                    disabled={isLoading}
+                  >
+                    {isLoading && actionType === "full" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    Sell Fully
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent>
                   Sell your entire position of {signal.token}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            <Button variant="outline" className="flex-1" onClick={() => handleAction("skip")} disabled={isLoading}>
+            
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 hover:bg-amber-100"
+                    onClick={() => handleAction("accept-partial", 50)}
+                    disabled={isLoading}
+                  >
+                    {isLoading && actionType === "partial" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    Sell 50%
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Sell half of your {signal.token} holdings
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            
+            <Button 
+              variant="outline" 
+              className="w-full col-span-2" 
+              onClick={() => handleAction("skip")} 
+              disabled={isLoading}
+            >
+              {isLoading && actionType === "skip" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Don't Sell
             </Button>
-          </>
+          </div>
         )}
       </CardFooter>
       
