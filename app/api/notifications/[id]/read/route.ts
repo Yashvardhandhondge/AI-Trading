@@ -60,8 +60,8 @@ export async function POST(
   */
   
   // Temporary implementation that always responds with success
-  logger.info("Mark as read endpoint called but implementation is disabled", {
-    context: "Notifications",
+  logger.info("Mark as read endpoint called but implementation is disabled"
+    // context: "Notifications",
    );
   
   return NextResponse.json({ 
