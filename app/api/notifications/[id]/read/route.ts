@@ -4,9 +4,10 @@ import { connectToDatabase, models } from "@/lib/db"
 import { logger } from "@/lib/logger"
 import mongoose from "mongoose"
 
+// Update the parameter types to match Next.js App Router expectations
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   try {
     const sessionUser = await getSessionUser()
@@ -15,7 +16,7 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { id } = params
+    const { id } = context.params
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return NextResponse.json({ error: "Invalid notification ID" }, { status: 400 })

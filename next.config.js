@@ -1,8 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
-  // Configure for proper socket.io handling
+  // swcMinify is now default in Next.js 15+, no need to specify it
   async headers() {
     return [
       {
