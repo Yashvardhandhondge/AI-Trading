@@ -5,7 +5,10 @@ import { connectToDatabase, models } from "@/lib/db"
 import { tradingProxy } from "@/lib/trading-proxy"
 import { logger } from "@/lib/logger"
 
-export async function POST(request: NextRequest, { params }: { params: { id: string; action: string } }) {
+export async function POST(
+  request: NextRequest,
+  {params}: { params: { id: string; action: string } }
+) {
   try {
     const sessionUser = await getSessionUser()
 
@@ -13,7 +16,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { id, action } = params
+    const { id, action } = context.params
     
     // Get percentage from request body for partial sells
     const requestBody = await request.json().catch(() => ({}));
