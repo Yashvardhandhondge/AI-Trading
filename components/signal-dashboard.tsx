@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Loader2, AlertCircle, Bell, ArrowUp, ArrowDown, Info, Clock } from "lucide-react"
 import { SignalCard } from "@/components/signal-card"
@@ -55,320 +55,210 @@ export default function SignalDashboard({
   const [notificationPermissionRequested, setNotificationPermissionRequested] = useState(false)
   const [notificationSent, setNotificationSent] = useState(false)
   const [positionAccumulation, setPositionAccumulation] = useState<Record<string, number>>({})
-  // Track how many times we've bought a token to calculate accumulated percentage
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [lastSignalCheckTime, setLastSignalCheckTime] = useState<number>(Date.now())
   
   // Get socket from store
   const { socket } = useSocketStore()
 
-  const fetchSignals = async () => {
+  // Create a throttled fetch signals function
+  const fetchSignals = useCallback(async (forceRefresh = false) => {
+    // If not force refreshing and we refreshed recently (within 15 seconds), skip
+    const now = Date.now();
+    if (!forceRefresh && now - lastSignalCheckTime < 15000) {
+      return;
+    }
+    
+    // Don't refresh if already refreshing
+    if (isRefreshing) {
+      return;
+    }
+    
     try {
-      setIsLoading(true)
-      setError(null)
+      setIsRefreshing(true);
+      setLastSignalCheckTime(now);
       
       // Always fetch signals regardless of exchange connection
-      const response = await fetch("/api/signals/active")
+      const response = await fetch("/api/signals/active");
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch signals: ${response.status}`)
+        throw new Error(`Failed to fetch signals: ${response.status}`);
       }
       
-      const data = await response.json()
+      const data = await response.json();
       
       if (data.signal) {
-        logger.info(`Received signal: ${data.signal.type} for ${data.signal.token}`, {
-          context: "SignalDashboard",
-          userId
-        })
-        
         // Check if this is a new signal (different from what we already have)
-        const isNewSignal = !activeSignal || activeSignal.id !== data.signal.id
+        const isNewSignal = !activeSignal || activeSignal.id !== data.signal.id;
         
         if (isNewSignal) {
+          // Only log and show notifications for new signals
+          logger.info(`Received new signal: ${data.signal.type} for ${data.signal.token}`, {
+            context: "SignalDashboard",
+            userId
+          });
+          
           // Show a toast notification for new signals
-          toast(`New ${data.signal.type} signal for ${data.signal.token} at $${data.signal.price}`, {
-            duration: 10000, // 10 seconds
+          toast(`New ${data.signal.type} signal for ${data.signal.token}`, {
+            duration: 10000,
             action: {
               label: "View",
-              onClick: () => {
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-              }
+              onClick: () => window.scrollTo({ top: 0, behavior: 'smooth' })
             }
-          })
+          });
           
           // Try Telegram's native notification if available
-          if (window.Telegram?.WebApp) {
-            try {
-              window.Telegram.WebApp.HapticFeedback.notificationOccurred('success')
-            } catch (e) {
-              console.error("Error with Telegram haptic feedback:", e)
-            }
+          try {
+            telegramService.triggerHapticFeedback('notification');
+          } catch (e) {
+            // Ignore errors
           }
+          
+          setNotificationSent(false); // Reset notification flag for new signals
         }
         
-        setActiveSignal(data.signal)
-        setNotificationSent(false) // Reset notification flag for new signals
-      } else {
-        setActiveSignal(null)
+        setActiveSignal(data.signal);
+      } else if (data.signal === null && activeSignal) {
+        // Only clear active signal if we're explicitly told there's no signal
+        setActiveSignal(null);
       }
       
-      setLastRefreshed(new Date())
+      setLastRefreshed(new Date());
+      setIsLoading(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch signals")
-      logger.error("Error fetching signals:", err instanceof Error ? err : new Error(String(err)), {
-        context: "SignalDashboard",
-        userId
-      })
+      // Only set error if we don't have a signal already
+      if (!activeSignal) {
+        setError(err instanceof Error ? err.message : "Failed to fetch signals");
+        logger.error("Error fetching signals:", err instanceof Error ? err : new Error(String(err)));
+      }
     } finally {
-      setIsLoading(false)
+      setIsRefreshing(false);
     }
-  }
+  }, [activeSignal, userId, isRefreshing, lastSignalCheckTime]);
 
-  const fetchUnreadNotifications = async () => {
+  const fetchUnreadNotifications = useCallback(async () => {
+    // Don't check too often
+    if (Date.now() - lastSignalCheckTime < 30000) {
+      return;
+    }
+    
     try {
-      const response = await fetch("/api/notifications/unread")
+      const response = await fetch("/api/notifications/unread");
       if (response.ok) {
-        const data = await response.json()
+        const data = await response.json();
         if (data.notifications) {
-          setUnreadNotifications(data.notifications.length)
+          setUnreadNotifications(data.notifications.length);
         }
       }
     } catch (error) {
-      logger.error("Error fetching unread notifications count:", error instanceof Error ? error : new Error(String(error)))
+      // Don't log error to reduce noise
     }
-  }
+  }, [lastSignalCheckTime]);
 
   useEffect(() => {
-    fetchSignals()
-    fetchUnreadNotifications()
-    
-    // Load position accumulation data from localStorage
+    // Load position accumulation data from localStorage only once at component mount
     try {
-      const storedAccumulation = localStorage.getItem('positionAccumulation')
+      const storedAccumulation = localStorage.getItem('positionAccumulation');
       if (storedAccumulation) {
-        const accumulation = JSON.parse(storedAccumulation)
-        setPositionAccumulation(accumulation)
+        setPositionAccumulation(JSON.parse(storedAccumulation));
       }
     } catch (e) {
-      console.error("Failed to load position accumulation from localStorage:", e)
+      console.error("Failed to load position accumulation from localStorage:", e);
     }
     
-    // Refresh signals every 2 minutes
-    const signalIntervalId = setInterval(fetchSignals, 120000)
+    fetchSignals(true);
+    fetchUnreadNotifications();
     
-    // Refresh notification count more frequently
-    const notificationIntervalId = setInterval(fetchUnreadNotifications, 30000)
+    // Refresh signals every 1 minute (reduced from 2 minutes)
+    const signalIntervalId = setInterval(() => fetchSignals(), 60000);
+    
+    // Refresh notification count less frequently
+    const notificationIntervalId = setInterval(fetchUnreadNotifications, 120000);
     
     return () => {
-      clearInterval(signalIntervalId)
-      clearInterval(notificationIntervalId)
-    }
-  }, [userId])
+      clearInterval(signalIntervalId);
+      clearInterval(notificationIntervalId);
+    };
+  }, [userId]);
 
-  // Enhanced notification effect for active signals
+  // Enhanced notification effect for active signals - with debouncing
   useEffect(() => {
     if (activeSignal && !notificationSent) {
-      // Calculate expiration time
-      const expiresAt = new Date(activeSignal.expiresAt)
-      const minutesLeft = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 60000))
-      const secondsLeft = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000) % 60)
-      
-      // Show custom toast for signal
-      toast.custom((t) => (
-        <div className="bg-blue-600 text-white p-4 rounded-lg shadow-lg max-w-md w-full">
-          <div className="flex items-center">
-            <div className={`rounded-full p-2 ${activeSignal.type === "BUY" ? "bg-green-500" : "bg-red-500"}`}>
-              {activeSignal.type === "BUY" ? (
-                <ArrowUp className="h-5 w-5 text-white" />
-              ) : (
-                <ArrowDown className="h-5 w-5 text-white" />
-              )}
-            </div>
-            <div className="ml-3">
-              <h3 className="font-bold text-lg">New {activeSignal.type} Signal!</h3>
-              <p>{activeSignal.token} at ${activeSignal.price}</p>
-            </div>
-          </div>
-          
-          <div className="mt-3">
-            <div className="flex justify-between text-sm mb-1">
-              <span>Auto-executes in:</span>
-              <span className="font-bold">{minutesLeft}:{secondsLeft.toString().padStart(2, '0')}</span>
-            </div>
-            <div className="w-full bg-blue-700 rounded-full h-2">
-              <div
-                className="bg-white h-2 rounded-full"
-                style={{ width: `${(minutesLeft * 60 + secondsLeft) / 600 * 100}%` }}
-              ></div>
-            </div>
-          </div>
-          
-          <div className="mt-4 flex justify-end space-x-2">
-            <button 
-              onClick={() => toast.dismiss(t)}
-              className="px-3 py-1 rounded text-sm"
-            >
-              Dismiss
-            </button>
-            <button 
-              className="bg-white text-blue-600 px-3 py-1 rounded text-sm font-bold"
-              onClick={() => {
-                toast.dismiss(t)
-                // Scroll to signal at the top
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-              }}
-            >
-              View Signal
-            </button>
-          </div>
-        </div>
-      ), { duration: 15000, position: "top-center" })
-      
-      // Try using Telegram's native notification features
-      try {
-        // Haptic feedback
-        telegramService.triggerHapticFeedback('notification')
-        
-        // Show popup notification
-        telegramService.showPopup(
-          `🔔 New ${activeSignal.type} signal for ${activeSignal.token} at $${activeSignal.price}!\n\n⏰ Auto-executes in ${minutesLeft} minutes ${secondsLeft} seconds.`,
-          [{ type: "default", text: "View Signal" }],
-          () => {
-            window.scrollTo({ top: 0, behavior: 'smooth' })
-          }
-        )
-      } catch (error) {
-        console.error("Error with Telegram notification:", error)
-      }
-      
-      setNotificationSent(true)
-    }
-  }, [activeSignal, notificationSent])
-
-  // Enhanced socket listener effect
-  useEffect(() => {
-    if (socket) {
-      // Enhanced notification listener for new signals
-      const handleNewSignal = (signal: Signal) => {
-        // Don't show multiple notifications for the same signal
-        if (signal.id === lastNotificationId) return
-        
-        setLastNotificationId(signal.id)
-        
-        // Calculate remaining time until auto-execution
-        const expiresAt = new Date(signal.expiresAt)
-        const minutesLeft = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 60000))
-        const secondsLeft = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000) % 60)
-        
-        // Use rich toast for prominent notification
-        toast.custom((t) => (
-          <div className="bg-blue-600 text-white p-4 rounded-lg shadow-lg max-w-md w-full">
-            <div className="flex items-center">
-              <div className={`rounded-full p-2 ${signal.type === "BUY" ? "bg-green-500" : "bg-red-500"}`}>
-                {signal.type === "BUY" ? (
-                  <ArrowUp className="h-5 w-5 text-white" />
-                ) : (
-                  <ArrowDown className="h-5 w-5 text-white" />
-                )}
-              </div>
-              <div className="ml-3">
-                <h3 className="font-bold text-lg">New {signal.type} Signal!</h3>
-                <p>{signal.token} at ${signal.price}</p>
-              </div>
-            </div>
-            
-            <div className="mt-3">
-              <div className="flex justify-between text-sm mb-1">
-                <span>Auto-executes in:</span>
-                <span className="font-bold">{minutesLeft}:{secondsLeft.toString().padStart(2, '0')}</span>
-              </div>
-              <div className="w-full bg-blue-700 rounded-full h-2">
-                <div
-                  className="bg-white h-2 rounded-full"
-                  style={{ width: `${(minutesLeft * 60 + secondsLeft) / 600 * 100}%` }}
-                ></div>
-              </div>
-            </div>
-            
-            <div className="mt-4 flex justify-end space-x-2">
-              <button 
-                onClick={() => toast.dismiss(t)}
-                className="px-3 py-1 rounded text-sm"
-              >
-                Dismiss
-              </button>
-              <button 
-                className="bg-white text-blue-600 px-3 py-1 rounded text-sm font-bold"
-                onClick={() => {
-                  toast.dismiss(t)
-                  // Scroll to signal at the top
-                  window.scrollTo({ top: 0, behavior: 'smooth' })
-                  // Force refresh signals
-                  fetchSignals()
-                }}
-              >
-                View Signal
-              </button>
-            </div>
-          </div>
-        ), { duration: 15000, position: "top-center" })
-        
-        // Try using Telegram's native notification features
+      // Debounce notifications
+      const notificationTimeout = setTimeout(() => {
         try {
-          // Haptic feedback
-          telegramService.triggerHapticFeedback('notification')
+          // Send notification with less overhead
+          telegramService.triggerHapticFeedback('notification');
           
-          // Show popup notification
-          telegramService.showPopup(
-            `🔔 New ${signal.type} signal for ${signal.token} at $${signal.price}!\n\n⏰ Auto-executes in ${minutesLeft} minutes ${secondsLeft} seconds.`,
-            [{ type: "default", text: "View Signal" }],
-            () => {
-              window.scrollTo({ top: 0, behavior: 'smooth' })
-              fetchSignals()
-            }
-          )
+          // Only show popup for critical signals
+          if (new Date(activeSignal.expiresAt).getTime() - Date.now() < 5 * 60 * 1000) {
+            telegramService.showPopup(
+              `🔔 New ${activeSignal.type} signal for ${activeSignal.token}`,
+              [{ type: "default", text: "View" }],
+              () => window.scrollTo({ top: 0, behavior: 'smooth' })
+            );
+          }
+          
+          setNotificationSent(true);
         } catch (error) {
-          console.error("Error with Telegram notification:", error)
+          // Ignore errors
         }
-        
-        // Update the signal list
-        fetchSignals()
-      }
+      }, 800); // Small delay to prevent multiple notifications
       
-      // Helper functions to parse notification messages
-      function parseTokenFromMessage(message: string): string {
-        const tokenMatch = message.match(/for\s+(\w+)/)
-        return tokenMatch ? tokenMatch[1] : "Unknown"
-      }
-      
-      function parseNumberFromMessage(message: string): number {
-        const priceMatch = message.match(/\$?(\d+(\.\d+)?)/)
-        return priceMatch ? parseFloat(priceMatch[1]) : 0
-      }
-      
-      // Setup enhanced socket listeners
-      socket.on("new-signal", handleNewSignal)
-      socket.on("notification", (notification: any) => {
-        if (notification.type === "signal") {
-          // Try to parse the notification data for signal information
-          const signalData = notification.data || {}
-          handleNewSignal({
-            id: signalData.signalId || notification.id,
-            type: signalData.signalType || (notification.message.includes("BUY") ? "BUY" : "SELL"),
-            token: signalData.token || parseTokenFromMessage(notification.message),
-            price: signalData.price || parseNumberFromMessage(notification.message),
-            expiresAt: signalData.expiresAt || new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-            riskLevel: signalData.riskLevel || "medium",
-            createdAt: signalData.createdAt || new Date().toISOString()
-          })
-        }
-      })
-      
-      return () => {
-        socket.off("new-signal", handleNewSignal)
-        socket.off("notification")
-      }
+      return () => clearTimeout(notificationTimeout);
     }
-  }, [socket, lastNotificationId, fetchSignals])
+  }, [activeSignal, notificationSent]);
+
+  // Socket listener effect with debouncing
+  useEffect(() => {
+    if (!socket) return;
+    
+    // Dictionary to keep track of when we last processed each event type
+    const lastProcessed: Record<string, number> = {};
+    
+    const handleNewSignal = (signal: Signal) => {
+      // Debounce by signal type
+      const now = Date.now();
+      const eventKey = `${signal.type}-${signal.token}`;
+      
+      if (lastProcessed[eventKey] && now - lastProcessed[eventKey] < 10000) {
+        return; // Skip if processed in the last 10 seconds
+      }
+      
+      lastProcessed[eventKey] = now;
+      
+      // Don't show multiple notifications for the same signal
+      if (signal.id === lastNotificationId) return;
+      
+      setLastNotificationId(signal.id);
+      
+      // Update the signal list with less overhead
+      setActiveSignal(signal);
+      setNotificationSent(false);
+    };
+    
+    // Setup socket listeners
+    socket.on("new-signal", handleNewSignal);
+    
+    socket.on("notification", (notification: any) => {
+      // Debounce notifications
+      const now = Date.now();
+      if (lastProcessed['notification'] && now - lastProcessed['notification'] < 10000) {
+        return;
+      }
+      lastProcessed['notification'] = now;
+      
+      // Process notification with minimum necessary logic
+      if (notification.type === "signal" && notification.data) {
+        fetchSignals(true); // Force fetch signals to get the latest
+      }
+    });
+    
+    return () => {
+      socket.off("new-signal", handleNewSignal);
+      socket.off("notification");
+    };
+  }, [socket, lastNotificationId, fetchSignals]);
 
   // Request Telegram notification permissions on component mount
   useEffect(() => {
@@ -605,46 +495,19 @@ export default function SignalDashboard({
     userHoldings.some(h => h.token === activeSignal.token && h.amount > 0) : 
     false
 
-  // Calculate the time since last refresh
-  const timeSinceRefresh = Math.floor((new Date().getTime() - lastRefreshed.getTime()) / 1000)
-
-  const handleManualRefresh = () => {
-    fetchSignals()
-    fetchUnreadNotifications()
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex justify-center items-center p-8">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <span className="ml-2">Loading signals...</span>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <Card className="mb-6">
-        <CardContent className="p-6">
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>Error loading signals: {error}</AlertDescription>
-          </Alert>
-          <div className="mt-4 flex justify-center">
-            <Button onClick={handleManualRefresh}>Retry</Button>
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
-
   return (
     <div className="space-y-4">
       {/* Signal refresh info bar */}
       <div className="flex justify-between items-center mb-2 px-1">
         <div className="flex items-center text-sm text-muted-foreground">
-          <span>Last checked: {timeSinceRefresh < 60 ? `${timeSinceRefresh}s ago` : `${Math.floor(timeSinceRefresh/60)}m ago`}</span>
+          {isRefreshing ? (
+            <span className="flex items-center">
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              Refreshing...
+            </span>
+          ) : (
+            <span>Last updated: {Math.floor((new Date().getTime() - lastRefreshed.getTime()) / 1000)}s ago</span>
+          )}
         </div>
         <div className="flex items-center space-x-2">
           {unreadNotifications > 0 && (
@@ -655,8 +518,18 @@ export default function SignalDashboard({
               </Badge>
             </div>
           )}
-          <Button variant="ghost" size="sm" onClick={handleManualRefresh} className="h-8 px-2">
-            Refresh
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => fetchSignals(true)} 
+            disabled={isRefreshing}
+            className="h-8 px-2"
+          >
+            {isRefreshing ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              "Refresh"
+            )}
           </Button>
         </div>
       </div>

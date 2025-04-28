@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -48,45 +48,66 @@ export function SignalCard({
   const [actionType, setActionType] = useState<"full" | "partial" | "skip" | null>(null)
   // To avoid duplicate notifications
   const [notificationsSent, setNotificationsSent] = useState<Set<number>>(new Set())
-
-  useEffect(() => {
-    // Calculate time left
-    const calculateTimeLeft = () => {
-      const expiresAt = new Date(signal.expiresAt).getTime()
-      const now = new Date().getTime()
-      const difference = expiresAt - now
-
-      const secondsLeft = Math.max(0, Math.floor(difference / 1000))
-      setTimeLeft(secondsLeft)
-      
-      // Notifications at specific time thresholds
-      handleTimeThresholdNotifications(secondsLeft)
-    }
-
-    calculateTimeLeft()
-    const timer = setInterval(calculateTimeLeft, 1000)
-
-    return () => clearInterval(timer)
-  }, [signal])
+  // Track the last notification time to reduce frequency
+  const [lastNotificationTime, setLastNotificationTime] = useState(0)
   
-  // Handle notifications at specific time thresholds
-  const handleTimeThresholdNotifications = (secondsLeft: number) => {
-    // Only show notifications if exchange is connected
-    if (!exchangeConnected) return
+  // Calculate time left only when needed
+  const calculateTimeLeft = useMemo(() => {
+    const expiresAt = new Date(signal.expiresAt).getTime();
+    const now = new Date().getTime();
+    const difference = expiresAt - now;
+    return Math.max(0, Math.floor(difference / 1000));
+  }, [signal.expiresAt, timeLeft]);
+  
+  useEffect(() => {
+    // Set initial time left
+    setTimeLeft(calculateTimeLeft);
     
-    // Notification thresholds in seconds
-    const thresholds = [300, 180, 60, 30];
+    // Update timer less frequently (every second is fine for countdown)
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        const newTime = Math.max(0, prev - 1);
+        
+        // Check notification thresholds less frequently (only when time changes significantly)
+        if ((prev % 5 === 0) && exchangeConnected) { // check every 5 seconds
+          handleTimeThresholdNotifications(newTime);
+        }
+        return newTime;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [signal.expiresAt, exchangeConnected]);
+
+  // Move notification threshold processing to a throttled function
+  const handleTimeThresholdNotifications = (secondsLeft: number) => {
+    // Only send notifications if 30 seconds have passed since the last one
+    const now = Date.now();
+    if (now - lastNotificationTime < 30000) {
+      return;
+    }
+    
+    // Only show notifications if exchange is connected
+    if (!exchangeConnected) return;
+    
+    // Notification thresholds in seconds - reduce number of thresholds
+    const thresholds = [300, 60]; // Notify at 5 minutes and 1 minute only
     
     // Find the closest threshold that matches our current time
-    const threshold = thresholds.find(t => secondsLeft <= t + 1 && secondsLeft >= t - 1);
+    const threshold = thresholds.find(t => 
+      secondsLeft <= t + 2 && 
+      secondsLeft >= t - 2 && 
+      !notificationsSent.has(t)
+    );
     
-    if (threshold && !notificationsSent.has(threshold)) {
+    if (threshold) {
       // Mark this threshold as notified
       setNotificationsSent(prev => {
         const updated = new Set(prev);
         updated.add(threshold);
         return updated;
       });
+      setLastNotificationTime(now);
       
       // Format the time for display
       const timeDisplay = threshold >= 60 ? 
@@ -99,33 +120,35 @@ export function SignalCard({
         duration: 10000, // 10 seconds
       });
       
-      // Try Telegram notification
+      // Try Telegram notification - but with less overhead
       try {
         // Trigger haptic feedback
         telegramService.triggerHapticFeedback('notification');
         
-        // Show popup for important thresholds (5 min and 1 min)
-        if (threshold === 300 || threshold === 60) {
+        // Show popup only for critical thresholds
+        if (threshold <= 60) {
           telegramService.showPopup(
-            `⚠️ ${signal.type} signal for ${signal.token} expires in ${timeDisplay}.\n\nAuto-execution will occur if no action is taken.`,
-            [{ type: "default", text: "View Signal" }],
+            `⚠️ ${signal.type} signal for ${signal.token} expires in ${timeDisplay}`,
+            [{ type: "default", text: "View" }],
             () => {
-              // Scroll to the signal card
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }
           );
         }
       } catch (error) {
-        logger.error(`Error sending threshold notification: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        // Don't log every error to reduce console noise
+        if (threshold <= 60) {
+          logger.error(`Error sending threshold notification: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
       }
     }
     
-    // Special handling for the very last seconds
-    if (secondsLeft <= 5 && secondsLeft > 0) {
-      // Trigger haptic feedback for the last 5 seconds
+    // Special handling for the very last seconds - reduced frequency
+    if (secondsLeft <= 5 && secondsLeft > 0 && secondsLeft % 2 === 0) {
+      // Trigger haptic feedback less often
       telegramService.triggerHapticFeedback('impact');
     }
-  }
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)

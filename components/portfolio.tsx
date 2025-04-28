@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, TrendingUp, TrendingDown, ExternalLink } from "lucide-react"
@@ -40,63 +40,99 @@ export function Portfolio({ user, socket }: PortfolioProps) {
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null)
   const [activeTab, setActiveTab] = useState("overview")
   const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<number>(Date.now())
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
-  useEffect(() => {
-    const fetchPortfolioData = async () => {
-      try {
-        // Only fetch if exchange is connected
-        if (user.exchangeConnected) {
-          setIsLoading(true)
-          setError(null)
+  // Add a throttling mechanism to prevent excessive data fetching
+  const fetchPortfolioData = useCallback(async (force = false) => {
+    // If not forcing refresh and data was fetched recently (within 30 seconds), skip
+    const now = Date.now()
+    if (!force && now - lastUpdated < 30000 && portfolio) {
+      return;
+    }
+    
+    // If currently refreshing, don't start another refresh
+    if (isRefreshing) {
+      return;
+    }
+    
+    try {
+      // Only fetch if exchange is connected
+      if (user.exchangeConnected) {
+        setIsRefreshing(true)
+        
+        try {
+          // Use the trading proxy service to get portfolio data
+          const portfolioData = await tradingProxy.getPortfolio(user.id)
           
-          try {
-            // Use the trading proxy service to get portfolio data
-            const portfolioData = await tradingProxy.getPortfolio(user.id)
-            
-            // Update the portfolio state
-            setPortfolio(portfolioData)
-            
-            logger.info(`Portfolio data fetched successfully`, {
-              context: "Portfolio",
-              userId: user.id
-            })
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "Unknown error"
-            logger.error(`Error fetching portfolio data: ${errorMessage}`)
+          // Update the portfolio state
+          setPortfolio(portfolioData)
+          setLastUpdated(Date.now())
+          
+          logger.info(`Portfolio data fetched successfully`, {
+            context: "Portfolio",
+            userId: user.id
+          })
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error"
+          logger.error(`Error fetching portfolio data: ${errorMessage}`)
+          
+          // Only show error if we don't already have data
+          if (!portfolio) {
             setError("Failed to load portfolio data. Please try again later.")
-          } finally {
-            setIsLoading(false)
           }
-        } else {
-          // If exchange is not connected, set loading to false
+        } finally {
+          setIsRefreshing(false)
           setIsLoading(false)
         }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error"
-        logger.error(`Error in portfolio effect: ${errorMessage}`)
+      } else {
+        // If exchange is not connected, set loading to false
         setIsLoading(false)
       }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+      logger.error(`Error in portfolio effect: ${errorMessage}`)
+      setIsLoading(false)
+      setIsRefreshing(false)
     }
+  }, [user.id, user.exchangeConnected, portfolio, lastUpdated, isRefreshing]);
 
-    fetchPortfolioData()
+  useEffect(() => {
+    fetchPortfolioData();
     
-    // Set an interval to refresh the portfolio data every 60 seconds
-    const intervalId = setInterval(fetchPortfolioData, 60000)
+    // Set a reasonable interval to refresh the portfolio data (every 2 minutes)
+    const intervalId = setInterval(() => fetchPortfolioData(), 120000);
     
     // Listen for socket events related to portfolio updates
     if (socket && user.exchangeConnected) {
       socket.on("portfolio-update", (data: any) => {
-        setPortfolio(data)
-      })
+        setPortfolio(data);
+        setLastUpdated(Date.now());
+      });
     }
     
     return () => {
-      clearInterval(intervalId)
+      clearInterval(intervalId);
       if (socket) {
-        socket.off("portfolio-update")
+        socket.off("portfolio-update");
       }
-    }
-  }, [user.id, user.exchangeConnected, socket])
+    };
+  }, [user.id, user.exchangeConnected, socket, fetchPortfolioData]);
+  
+  // Calculate derived data only when needed (memoize)
+  const portfolioStats = useMemo(() => {
+    if (!portfolio) return null;
+    
+    return {
+      allocationPercentage: portfolio.totalValue > 0 
+        ? ((portfolio.allocatedCapital / portfolio.totalValue) * 100).toFixed(2) 
+        : '0.00',
+      totalPnL: portfolio.realizedPnl + portfolio.unrealizedPnl,
+      pnlPercentage: portfolio.totalValue > 0
+        ? (((portfolio.realizedPnl + portfolio.unrealizedPnl) / portfolio.totalValue) * 100).toFixed(2)
+        : '0.00'
+    };
+  }, [portfolio]);
 
   if (!user.exchangeConnected) {
     return (
@@ -109,10 +145,10 @@ export function Portfolio({ user, socket }: PortfolioProps) {
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
-  if (isLoading) {
+  if (isLoading && !portfolio) {
     return (
       <div className="container mx-auto p-4 pb-20">
         <h1 className="text-2xl font-bold mb-4">Portfolio</h1>
@@ -121,7 +157,7 @@ export function Portfolio({ user, socket }: PortfolioProps) {
           <span className="ml-2">Loading portfolio...</span>
         </div>
       </div>
-    )
+    );
   }
 
   if (error) {
@@ -155,7 +191,15 @@ export function Portfolio({ user, socket }: PortfolioProps) {
 
   return (
     <div className="container mx-auto p-4 pb-20">
-      <h1 className="text-2xl font-bold mb-4">Portfolio</h1>
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold">Portfolio</h1>
+        {isRefreshing && (
+          <div className="flex items-center text-sm text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            <span>Updating...</span>
+          </div>
+        )}
+      </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-2 mb-4">
@@ -186,9 +230,7 @@ export function Portfolio({ user, socket }: PortfolioProps) {
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Allocation %</p>
                   <p className="text-2xl font-bold">
-                    {portfolio.totalValue > 0 
-                      ? ((portfolio.allocatedCapital / portfolio.totalValue) * 100).toFixed(2) 
-                      : '0.00'}%
+                    {portfolioStats?.allocationPercentage}%
                   </p>
                 </div>
               </div>
@@ -231,19 +273,17 @@ export function Portfolio({ user, socket }: PortfolioProps) {
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Total P&L</p>
                   <p
-                    className={`text-2xl font-bold ${portfolio.realizedPnl + portfolio.unrealizedPnl >= 0 ? "text-green-500" : "text-red-500"}`}
+                    className={`text-2xl font-bold ${(portfolioStats?.totalPnL ?? 0) >= 0 ? "text-green-500" : "text-red-500"}`}
                   >
-                    {formatCurrency(portfolio.realizedPnl + portfolio.unrealizedPnl)}
+                    {formatCurrency(portfolioStats?.totalPnL ?? 0)}
                   </p>
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">P&L %</p>
                   <p
-                    className={`text-2xl font-bold ${portfolio.realizedPnl + portfolio.unrealizedPnl >= 0 ? "text-green-500" : "text-red-500"}`}
+                    className={`text-2xl font-bold ${(Number(portfolioStats?.pnlPercentage) || 0) >= 0 ? "text-green-500" : "text-red-500"}`}
                   >
-                    {portfolio.totalValue > 0 
-                      ? (((portfolio.realizedPnl + portfolio.unrealizedPnl) / portfolio.totalValue) * 100).toFixed(2)
-                      : '0.00'}%
+                    {portfolioStats?.pnlPercentage}%
                   </p>
                 </div>
               </div>
