@@ -1,19 +1,17 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, TrendingUp, AlertCircle, RefreshCw } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import { logger } from "@/lib/logger"
-import { useSocketStore } from "@/lib/socket-client"
 import type { SessionUser } from "@/lib/auth"
 import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
 
 interface ProfitLossViewProps {
   user: SessionUser
-  socket: any
 }
 
 interface Position {
@@ -36,16 +34,17 @@ interface Trade {
   timestamp: string
 }
 
-export function ProfitLossView({ user, socket }: ProfitLossViewProps) {
+export function ProfitLossView({ user }: ProfitLossViewProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [positions, setPositions] = useState<Position[]>([])
   const [trades, setTrades] = useState<Trade[]>([])
   const [totalPnl, setTotalPnl] = useState<number>(0)
   const [pnlPercentage, setPnlPercentage] = useState<number>(0)
   const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   
-  // Fetch portfolio data
-  const fetchData = async () => {
+  // Fetch portfolio data - using useCallback to be able to call it from multiple places
+  const fetchData = useCallback(async () => {
     try {
       setIsLoading(true)
       setError(null)
@@ -103,37 +102,34 @@ export function ProfitLossView({ user, socket }: ProfitLossViewProps) {
           })))
         }
       }
+      
+      // Update last fetched timestamp
+      setLastUpdated(new Date())
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load portfolio data")
       logger.error(`Error fetching portfolio data: ${err instanceof Error ? err.message : "Unknown error"}`)
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [user.id, user.exchangeConnected])
   
+  // Initial data load and periodic refresh
   useEffect(() => {
     fetchData()
     
-    // Set up listener for portfolio updates
-    if (socket) {
-      socket.on("portfolio-update", (data: any) => {
-        // Refresh data when portfolio updates
-        fetchData()
-      })
-      
-      socket.on("cycle-update", (data: any) => {
-        // Refresh data when cycles update
-        fetchData()
-      })
-    }
+    // Set up polling to refresh data every 30 seconds
+    const refreshInterval = setInterval(() => {
+      fetchData()
+    }, 30000)
     
-    return () => {
-      if (socket) {
-        socket.off("portfolio-update")
-        socket.off("cycle-update")
-      }
-    }
-  }, [user.id, user.exchangeConnected, socket])
+    // Clean up the interval when component unmounts
+    return () => clearInterval(refreshInterval)
+  }, [fetchData])
+  
+  // Handle manual refresh
+  const handleRefresh = () => {
+    fetchData()
+  }
   
   // Format date for display
   const formatDate = (dateString: string) => {
@@ -141,7 +137,7 @@ export function ProfitLossView({ user, socket }: ProfitLossViewProps) {
     return `${date.getFullYear()}/${('0' + (date.getMonth() + 1)).slice(-2)}/${('0' + date.getDate()).slice(-2)} ${('0' + date.getHours()).slice(-2)}:${('0' + date.getMinutes()).slice(-2)} PM`
   }
   
-  if (isLoading) {
+  if (isLoading && positions.length === 0 && trades.length === 0) {
     return (
       <div className="flex justify-center items-center p-8">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -182,14 +178,31 @@ export function ProfitLossView({ user, socket }: ProfitLossViewProps) {
     <div className="container mx-auto p-4 pb-20">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold">Profit & Loss</h2>
-        <div className="text-xl font-bold text-green-500">+{pnlPercentage.toFixed(0)}%</div>
+        <div className="flex items-center gap-2">
+          <Button 
+            size="sm" 
+            variant="ghost" 
+            onClick={handleRefresh} 
+            className="h-8 px-2"
+            disabled={isLoading}
+          >
+            <RefreshCw className={`h-4 w-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
+            {isLoading ? 'Updating...' : 'Refresh'}
+          </Button>
+          <div className="text-xl font-bold text-green-500">+{pnlPercentage.toFixed(0)}%</div>
+        </div>
       </div>
       
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4 text-red-800">
+        <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4 text-red-800 flex items-center">
+          <AlertCircle className="h-4 w-4 mr-2" />
           {error}
         </div>
       )}
+      
+      <div className="text-xs text-muted-foreground mb-2">
+        Last updated: {lastUpdated.toLocaleTimeString()}
+      </div>
       
       {/* P&L Chart - Simplified representation */}
       <Card className="mb-6">
