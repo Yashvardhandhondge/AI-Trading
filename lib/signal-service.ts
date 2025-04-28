@@ -1,10 +1,10 @@
-// lib/signal-service.ts
+// lib/signal-service.ts - UPDATED
 import { logger } from "@/lib/logger";
 import { EkinApiService } from "@/lib/ekin-api";
 
 // Define interfaces for signal data
 export interface Signal {
-  id: string;
+  id: string; // Ensure id is always defined
   type: "BUY" | "SELL";
   token: string;
   price: number;
@@ -17,6 +17,8 @@ export interface Signal {
   positives?: string[];
   warnings?: string[];
   warning_count?: number;
+  processed?: boolean;
+  action?: string;
 }
 
 export interface SignalQueryOptions {
@@ -46,6 +48,16 @@ class SignalService {
   }
 
   /**
+   * Generate a temporary ID for signals that don't have one
+   * This ensures all signals have an ID before being used in the UI
+   */
+  private generateTemporaryId(signal: any): string {
+    // Create a deterministic ID based on signal properties
+    const idBase = `${signal.type}_${signal.token}_${signal.price}`;
+    return `temp_${idBase}_${Date.now()}`;
+  }
+
+  /**
    * Get signals from the API, with retries and fallbacks
    */
   public async getSignals(options: SignalQueryOptions = {}): Promise<Signal[]> {
@@ -53,10 +65,13 @@ class SignalService {
       // Try database API first
       const signals = await this.fetchSignalsFromAPI(options);
       
+      // Ensure all signals have an ID
+      const validatedSignals = this.ensureSignalIds(signals);
+      
       // If we got signals from the API, return them
-      if (signals && signals.length > 0) {
-        this.cachedSignals = signals;
-        return signals;
+      if (validatedSignals && validatedSignals.length > 0) {
+        this.cachedSignals = validatedSignals;
+        return validatedSignals;
       }
       
       // If no signals from API, try Ekin API directly if it's been more than 5 minutes
@@ -65,26 +80,48 @@ class SignalService {
         const ekinSignals = await this.fetchSignalsFromEkin(options);
         
         if (ekinSignals && ekinSignals.length > 0) {
-          this.cachedSignals = ekinSignals;
+          // Ensure all signals from Ekin have IDs
+          const validatedEkinSignals = this.ensureSignalIds(ekinSignals);
+          this.cachedSignals = validatedEkinSignals;
           this.lastEkinUpdate = Date.now();
           
           // Try to store these signals in our database
-          await this.storeSignalsInDatabase(ekinSignals);
+          await this.storeSignalsInDatabase(validatedEkinSignals);
           
-          return ekinSignals;
+          return validatedEkinSignals;
         }
       }
       
-      // If we still don't have signals, return cached signals or empty array
-      return this.cachedSignals.length > 0 ? this.cachedSignals : [];
+      // If we still don't have signals, return cached signals (ensuring they have IDs) or empty array
+      return this.cachedSignals.length > 0 ? this.ensureSignalIds(this.cachedSignals) : [];
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       logger.error(`Error fetching signals: ${errorMessage}`);
       
-      // Return cached signals as a fallback
-      return this.cachedSignals.length > 0 ? this.cachedSignals : [];
+      // Return cached signals as a fallback (ensuring they have IDs)
+      return this.cachedSignals.length > 0 ? this.ensureSignalIds(this.cachedSignals) : [];
     }
+  }
+  
+  /**
+   * Ensure all signals have a valid ID
+   */
+  private ensureSignalIds(signals: any[]): Signal[] {
+    if (!signals || !Array.isArray(signals)) return [];
+    
+    return signals.map(signal => {
+      if (!signal.id) {
+        // Generate a temporary ID if the signal doesn't have one
+        const tempId = this.generateTemporaryId(signal);
+        logger.debug(`Generated temporary ID for signal: ${tempId}`, {
+          context: "SignalService",
+          data: { token: signal.token, type: signal.type }
+        });
+        return { ...signal, id: tempId };
+      }
+      return signal;
+    });
   }
   
   /**
@@ -156,11 +193,19 @@ class SignalService {
         return [];
       }
       
-      // Convert Ekin signals to our format
+      // Convert Ekin signals to our format and ensure they have IDs
       const signals: Signal[] = ekinSignals.map(ekinSignal => {
         const appSignal = EkinApiService.convertToAppSignal(ekinSignal);
+        
+        // Generate a temporary ID for the signal
+        const tempId = this.generateTemporaryId({
+          type: appSignal.type,
+          token: appSignal.token,
+          price: appSignal.price
+        });
+        
         return {
-          id: `ekin-${ekinSignal.symbol}-${Date.now()}`,
+          id: tempId, // Add the temporary ID
           type: appSignal.type,
           token: appSignal.token,
           price: appSignal.price,
@@ -212,6 +257,12 @@ class SignalService {
     try {
       // Loop through signals and store each one
       for (const signal of signals) {
+        // Ensure required fields are present
+        if (!signal.type || !signal.token || !signal.price || !signal.riskLevel || !signal.expiresAt) {
+          logger.warn(`Skipping storing signal due to missing required fields: ${signal.id}`);
+          continue;
+        }
+        
         await fetch("/api/signals/store", {
           method: "POST",
           headers: {
@@ -244,8 +295,10 @@ class SignalService {
       const data = await response.json();
       
       if (data.signals && Array.isArray(data.signals) && data.signals.length > 0) {
-        logger.info(`Found ${data.signals.length} new signals`);
-        return { hasNew: true, newSignals: data.signals };
+        // Ensure all new signals have IDs
+        const validatedSignals = this.ensureSignalIds(data.signals);
+        logger.info(`Found ${validatedSignals.length} new signals`);
+        return { hasNew: true, newSignals: validatedSignals };
       }
       
       return { hasNew: false, newSignals: [] };
@@ -264,6 +317,11 @@ class SignalService {
     percentage?: number
   ): Promise<boolean> {
     try {
+      if (!signalId || signalId === "undefined") {
+        logger.error("Cannot execute action: Signal ID is undefined or invalid");
+        throw new Error("Invalid signal ID. Action cannot be processed.");
+      }
+      
       logger.info(`Executing ${action} on signal ${signalId}`);
       
       const body: Record<string, any> = {};
@@ -271,6 +329,48 @@ class SignalService {
         body.percentage = percentage;
       }
       
+      // First check if this is a temporary ID (starts with temp_)
+      if (signalId.startsWith('temp_')) {
+        logger.info(`Processing temporary signal ID: ${signalId}`);
+        
+        // For temporary IDs, we need to create the signal in the database first
+        // Extract the signal from cached signals
+        const signal = this.cachedSignals.find(s => s.id === signalId);
+        
+        if (!signal) {
+          throw new Error(`Signal with ID ${signalId} not found in cache`);
+        }
+        
+        // Store signal in database to get a real MongoDB ID
+        try {
+          const storeResponse = await fetch("/api/signals/store", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(signal),
+          });
+          
+          if (!storeResponse.ok) {
+            throw new Error(`Failed to store signal: ${storeResponse.status}`);
+          }
+          
+          const storeData = await storeResponse.json();
+          
+          if (!storeData.success || !storeData.signalId) {
+            throw new Error("No signal ID returned from store operation");
+          }
+          
+          // Use the real MongoDB ID for the action
+          signalId = storeData.signalId;
+          logger.info(`Temporary signal stored successfully with real ID: ${signalId}`);
+        } catch (storeError) {
+          logger.error(`Error storing temporary signal: ${storeError instanceof Error ? storeError.message : "Unknown error"}`);
+          throw new Error("Failed to prepare signal for action");
+        }
+      }
+      
+      // Now execute the action with the real ID
       const response = await fetch(`/api/signals/${signalId}/${action}`, {
         method: "POST",
         headers: {
@@ -280,8 +380,9 @@ class SignalService {
       });
       
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Error ${response.status}`);
+        const errorData = await response.json().catch(() => ({ error: `Error ${response.status}` }));
+        const errorMessage = errorData.error || errorData.message || `Error ${response.status}`;
+        throw new Error(errorMessage);
       }
       
       logger.info(`Successfully executed ${action} on signal ${signalId}`);

@@ -5,11 +5,12 @@ import { getSessionUser } from "@/lib/auth"
 import { connectToDatabase, models } from "@/lib/db"
 import { tradingProxy } from "@/lib/trading-proxy"
 import { logger } from "@/lib/logger"
+import mongoose from "mongoose"
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string; action: string }> })
-   {
+  { params }: { params: { id: string; action: string } }
+) {
   try {
     const sessionUser = await getSessionUser()
 
@@ -17,14 +18,22 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { id, action } =await params
+    const { id, action } = params
+
+    // Validate ID and action
+    if (!id || !action || !["accept", "accept-partial", "skip"].includes(action)) {
+      logger.error(`Invalid parameters for signal action: ID=${id}, action=${action}`)
+      return NextResponse.json({ error: "Invalid parameters" }, { status: 400 })
+    }
+
+    // Log the incoming request
+    logger.info(`Processing signal action: ${action} for ID=${id}`, {
+      context: "SignalAction", 
+      userId: sessionUser.id
+    })
 
     const requestBody = await request.json().catch(() => ({}))
     const percentage = requestBody.percentage
-
-    if (!id || !action || !["accept", "accept-partial", "skip"].includes(action)) {
-      return NextResponse.json({ error: "Invalid parameters" }, { status: 400 })
-    }
 
     if (action === "accept-partial" && (!percentage || percentage <= 0 || percentage >= 100)) {
       return NextResponse.json({ error: "Invalid percentage for partial sell" }, { status: 400 })
@@ -38,10 +47,98 @@ export async function POST(
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    const signal = await models.Signal.findById(id)
+    // Check if the ID is a valid MongoDB ObjectId before querying
+    // This is a critical fix for the error that was occurring
+    let signal
+    
+    if (mongoose.isValidObjectId(id)) {
+      // If it's a valid ObjectId, query directly
+      signal = await models.Signal.findById(id)
+    } else {
+      // If not, it might be a temporary ID or invalid - log and handle accordingly
+      logger.warn(`Non-MongoDB ObjectId format received: ${id}`, {
+        context: "SignalAction",
+        userId: sessionUser.id
+      })
+      
+      // For temporary IDs with format like temp_BUY_BTC_50000_timestamp
+      if (id.startsWith('temp_')) {
+        // Extract parameters from the temporary ID
+        const parts = id.split('_')
+        if (parts.length >= 4) {
+          const type = parts[1]
+          const token = parts[2]
+          
+          // Try to find a matching signal
+          signal = await models.Signal.findOne({
+            type,
+            token,
+            expiresAt: { $gt: new Date() } // Only active signals
+          }).sort({ createdAt: -1 }) // Get the most recent one
+          
+          if (signal) {
+            logger.info(`Found matching signal for temporary ID: ${id} → ${signal._id}`, {
+              context: "SignalAction",
+              userId: sessionUser.id
+            })
+          }
+        }
+      }
+    }
 
     if (!signal) {
-      return NextResponse.json({ error: "Signal not found" }, { status: 404 })
+      // If we still can't find a valid signal, try to create one
+      if (action !== "skip") {
+        logger.info(`Signal not found, attempting to create from temp ID: ${id}`, {
+          context: "SignalAction",
+          userId: sessionUser.id
+        })
+        
+        try {
+          // Parse the temp ID format (if it follows the expected pattern)
+          if (id.startsWith('temp_')) {
+            const parts = id.split('_')
+            if (parts.length >= 4) {
+              const type = parts[1] as "BUY" | "SELL"
+              const token = parts[2]
+              const price = parseFloat(parts[3])
+              
+              if (type && token && !isNaN(price)) {
+                // Determine risk level based on user's preference
+                const riskLevel = user.riskLevel || "medium"
+                
+                // Calculate expiration time (10 minutes from now)
+                const expiresAt = new Date()
+                expiresAt.setMinutes(expiresAt.getMinutes() + 10)
+                
+                // Create a new signal
+                signal = await models.Signal.create({
+                  type,
+                  token,
+                  price,
+                  riskLevel,
+                  createdAt: new Date(),
+                  expiresAt,
+                  autoExecuted: false
+                })
+                
+                logger.info(`Created new signal from temp ID: ${id} → ${signal._id}`, {
+                  context: "SignalAction",
+                  userId: sessionUser.id
+                })
+              }
+            }
+          }
+        } catch (createError) {
+          logger.error(`Error creating signal from temp ID: ${createError instanceof Error ? createError.message : "Unknown error"}`)
+        }
+      }
+      
+      // If we still don't have a valid signal, return an error
+      if (!signal) {
+        logger.error(`Signal not found with ID: ${id}`)
+        return NextResponse.json({ error: "Signal not found" }, { status: 404 })
+      }
     }
 
     if (action === "skip") {
@@ -126,6 +223,11 @@ export async function POST(
       }
 
       try {
+        logger.info(`Executing trade via proxy: ${tradeParams.side} ${tradeParams.symbol} ${tradeParams.quantity}`, {
+          context: "SignalAction",
+          userId: sessionUser.id
+        })
+        
         const tradeResult = await tradingProxy.executeTrade(
           sessionUser.id,
           tradeParams.symbol,

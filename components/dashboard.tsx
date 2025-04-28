@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, ArrowUp, ArrowDown, Settings, Info, RefreshCw, Clock, AlertCircle } from "lucide-react"
+import { Loader2, Settings, Info, RefreshCw, Clock, AlertCircle } from "lucide-react"
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
 import { formatCurrency } from "@/lib/utils"
 import { logger } from "@/lib/logger"
@@ -12,6 +12,7 @@ import { toast } from "sonner"
 import type { SessionUser } from "@/lib/auth"
 import { signalService, type Signal } from "@/lib/signal-service"
 import { telegramService } from "@/lib/telegram-service"
+import { SignalCard } from "@/components/signal-card"
 
 interface DashboardProps {
   user: SessionUser
@@ -34,11 +35,102 @@ export function Dashboard({ user }: DashboardProps) {
     try {
       if (showLoadingState) {
         setIsLoading(true)
-      } else {
+      
+  return (
+    <div className="space-y-4">
+      {/* Signal refresh info bar */}
+      <div className="flex justify-between items-center mb-2 px-1">
+        <div className="flex items-center text-sm text-muted-foreground">
+          {refreshing ? (
+            <span className="flex items-center">
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              Refreshing...
+            </span>
+          ) : (
+            <span>Last updated: {Math.floor((new Date().getTime() - lastUpdated.getTime()) / 1000)}s ago</span>
+          )}
+        </div>
+        <div className="flex items-center space-x-2">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={handleRefresh} 
+            disabled={refreshing}
+            className="h-8 px-2"
+          >
+            {refreshing ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              "Refresh"
+            )}
+          </Button>
+        </div>
+      </div>
+      
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4 text-red-800">
+          <div className="flex items-start">
+            <AlertCircle className="h-4 w-4 mt-0.5 mr-2 flex-shrink-0" />
+            <p>{error}</p>
+          </div>
+        </div>
+      )}
+      
+      {isLoading && signals.length === 0 ? (
+        <div className="flex justify-center items-center p-8">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <span className="ml-2">Loading signals...</span>
+        </div>
+      ) : signals.length === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-center">
+            <p className="text-muted-foreground">No active signals at the moment</p>
+            <p className="text-sm text-muted-foreground mt-2">We'll notify you when new signals are available</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          {signals
+            .filter(signal => {
+              // For SELL signals, only show if user owns the token
+              if (signal.type === "SELL") {
+                return !!userHoldings[signal.token] && userHoldings[signal.token] > 0;
+              }
+              // Always show BUY signals
+              return true;
+            })
+            .map(signal => (
+              <SignalCard
+                key={signal.id}
+                signal={signal}
+                onAction={handleSignalAction}
+                exchangeConnected={user.exchangeConnected}
+                userOwnsToken={!!userHoldings[signal.token] && userHoldings[signal.token] > 0}
+                accumulatedPercentage={positionAccumulation[signal.token] || 0}
+              />
+            ))}
+        </div>
+      )}
+      
+      {/* Connect Exchange Modal */}
+      <ConnectExchangeModal 
+        open={showConnectModal} 
+        onOpenChange={setShowConnectModal}
+        userId={Number(user.id)}
+        onSuccess={() => window.location.reload()} // Force a refresh when connection is successful
+      />
+    </div>
+  )
+} else {
         setRefreshing(true)
       }
       
       setError(null)
+      
+      logger.info(`Fetching signals for risk level: ${user.riskLevel}`, {
+        context: "Dashboard", 
+        userId: user.id
+      })
       
       // Use our signal service to fetch signals
       const fetchedSignals = await signalService.getSignals({
@@ -47,6 +139,12 @@ export function Dashboard({ user }: DashboardProps) {
       })
       
       if (fetchedSignals.length > 0) {
+        // Log the first signal to help with debugging
+        logger.debug(`First signal details: ${JSON.stringify(fetchedSignals[0])}`, {
+          context: "Dashboard", 
+          userId: user.id
+        })
+        
         setSignals(fetchedSignals)
         logger.info(`Fetched ${fetchedSignals.length} signals successfully`, {
           context: "Dashboard", 
@@ -90,12 +188,18 @@ export function Dashboard({ user }: DashboardProps) {
             holdings[holding.token] = holding.amount
           })
           setUserHoldings(holdings)
+          
+          logger.info(`Fetched user holdings: ${Object.keys(holdings).join(', ')}`, {
+            context: "Dashboard",
+            userId: user.id
+          })
         }
       }
     } catch (error) {
       logger.error(`Error fetching user holdings: ${error instanceof Error ? error.message : "Unknown error"}`)
     }
   }
+  
   
   useEffect(() => {
     fetchSignals()
@@ -181,8 +285,15 @@ export function Dashboard({ user }: DashboardProps) {
   }, [checkForNewSignals])
   
   // Handle signal actions (Buy/Skip)
-  const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signal: Signal, percentage?: number) => {
+  const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => {
     try {
+      // Get the signal from our state
+      const signal = signals.find(s => s.id === signalId)
+      
+      if (!signal) {
+        throw new Error("Signal not found")
+      }
+      
       // If not connected to exchange and trying to accept, show connect modal
       if ((action === "accept" || action === "accept-partial") && !user.exchangeConnected) {
         setShowConnectModal(true)
@@ -196,10 +307,17 @@ export function Dashboard({ user }: DashboardProps) {
       }
       
       // Set loading state for this specific signal
-      setActionLoading(prev => ({ ...prev, [signal.id]: action }))
+      setActionLoading(prev => ({ ...prev, [signalId]: action }))
+      
+      // Log the signal action attempt
+      logger.info(`Attempting signal action: ${action} for ${signal.type} ${signal.token} (ID: ${signalId})`, {
+        context: "Dashboard",
+        userId: user.id
+      })
+      
       
       // Call our signal service to handle the action
-      await signalService.executeSignalAction(signal.id, action, percentage)
+      await signalService.executeSignalAction(signalId, action, percentage)
       
       // Handle success
       if (action === "accept" || action === "accept-partial") {
@@ -246,27 +364,27 @@ export function Dashboard({ user }: DashboardProps) {
       // Mark signal as processed in the UI
       setSignals(prev => 
         prev.map(s => 
-          s.id === signal.id 
+          s.id === signalId 
             ? { ...s, processed: true, action } 
             : s
         )
       )
       
-      // Trigger haptic feedback if available
+      // Try to trigger haptic feedback for better UX
       try {
         telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification")
       } catch (e) {
-        // Ignore errors
+        // Ignore errors with haptics
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to process action"
       toast.error(`Action failed: ${errorMessage}`)
       logger.error(`Signal action error: ${errorMessage}`)
     } finally {
       // Clear loading state
       setActionLoading(prev => {
         const newState = { ...prev }
-        delete newState[signal.id]
+        delete newState[signalId]
         return newState
       })
     }
@@ -438,7 +556,7 @@ export function Dashboard({ user }: DashboardProps) {
                           <Button 
                             className={showBuyButton ? "bg-green-600 hover:bg-green-700 text-white" : "bg-blue-600 text-white"}
                             disabled={!!actionLoading[signal.id]}
-                            onClick={() => handleSignalAction("accept", signal)}
+                            onClick={() => handleSignalAction("accept", signal.id)}
                           >
                             {actionLoading[signal.id] === "accept" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                             {showBuyButton ? "Buy 10%" : "Connect Wallet"}
@@ -446,7 +564,7 @@ export function Dashboard({ user }: DashboardProps) {
                           <Button 
                             variant="outline"
                             disabled={!!actionLoading[signal.id]}
-                            onClick={() => handleSignalAction("skip", signal)}
+                            onClick={() => handleSignalAction("skip", signal.id)}
                           >
                             {actionLoading[signal.id] === "skip" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                             Skip
@@ -458,7 +576,7 @@ export function Dashboard({ user }: DashboardProps) {
                           <Button 
                             className="bg-red-600 hover:bg-red-700 text-white"
                             disabled={!!actionLoading[signal.id]}
-                            onClick={() => handleSignalAction("accept", signal)}
+                            onClick={() => handleSignalAction("accept", signal.id)}
                           >
                             {actionLoading[signal.id] === "accept" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                             Sell Fully
@@ -466,7 +584,7 @@ export function Dashboard({ user }: DashboardProps) {
                           <Button 
                             className="bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 hover:bg-amber-100 text-amber-800"
                             disabled={!!actionLoading[signal.id]}
-                            onClick={() => handleSignalAction("accept-partial", signal, 50)}
+                            onClick={() => handleSignalAction("accept-partial", signal.id, 50)}
                           >
                             {actionLoading[signal.id] === "accept-partial" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                             Sell 50%
@@ -474,7 +592,7 @@ export function Dashboard({ user }: DashboardProps) {
                           <Button 
                             variant="outline" 
                             className="col-span-2 mt-1" 
-                            onClick={() => handleSignalAction("skip", signal)} 
+                            onClick={() => handleSignalAction("skip", signal.id)} 
                             disabled={!!actionLoading[signal.id]}
                           >
                             {actionLoading[signal.id] === "skip" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}

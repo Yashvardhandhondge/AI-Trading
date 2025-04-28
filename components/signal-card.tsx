@@ -13,26 +13,25 @@ import { toast } from "sonner"
 import { logger } from "@/lib/logger"
 
 interface Signal {
-  id: string
-  type: "BUY" | "SELL"
-  token: string
-  price: number
-  riskLevel: "low" | "medium" | "high"
-  createdAt: string
-  expiresAt: string
-  link?: string
-  positives?: string[]
-  warnings?: string[]
-  warning_count?: number
+  id: string; // Ensure ID is always defined
+  type: "BUY" | "SELL";
+  token: string;
+  price: number;
+  riskLevel: "low" | "medium" | "high";
+  createdAt: string;
+  expiresAt: string;
+  link?: string;
+  positives?: string[];
+  warnings?: string[];
+  warning_count?: number;
 }
 
 interface SignalCardProps {
-  signal: Signal
-  onAction: (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => void
-  exchangeConnected: boolean
-  userOwnsToken?: boolean
-  accumulatedPercentage?: number
-
+  signal: Signal;
+  onAction: (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => void;
+  exchangeConnected: boolean;
+  userOwnsToken?: boolean;
+  accumulatedPercentage?: number;
 }
 
 export function SignalCard({ 
@@ -42,150 +41,82 @@ export function SignalCard({
   userOwnsToken = false,
   accumulatedPercentage = 0 
 }: SignalCardProps) {
-  const [timeLeft, setTimeLeft] = useState<number>(0)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [showDetails, setShowDetails] = useState(false)
-  const [actionType, setActionType] = useState<"full" | "partial" | "skip" | null>(null)
-  // Comment out notification tracking
-  /*
-  // To avoid duplicate notifications
-  const [notificationsSent, setNotificationsSent] = useState<Set<number>>(new Set())
-  // Track the last notification time to reduce frequency
-  const [lastNotificationTime, setLastNotificationTime] = useState(0)
-  */
+  const [timeLeft, setTimeLeft] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
+  const [actionType, setActionType] = useState<"full" | "partial" | "skip" | null>(null);
+  
+  // Ensure signal has an ID before proceeding
+  useEffect(() => {
+    if (!signal.id) {
+      logger.error("Signal is missing ID");
+      setError("Invalid signal data. Please refresh the page.");
+    }
+  }, [signal]);
   
   // Calculate time left only when needed
   const calculateTimeLeft = useMemo(() => {
-    const expiresAt = new Date(signal.expiresAt).getTime();
-    const now = new Date().getTime();
-    const difference = expiresAt - now;
-    return Math.max(0, Math.floor(difference / 1000));
-  }, [signal.expiresAt, timeLeft]);
+    try {
+      const expiresAt = new Date(signal.expiresAt).getTime();
+      const now = new Date().getTime();
+      const difference = expiresAt - now;
+      return Math.max(0, Math.floor(difference / 1000));
+    } catch (e) {
+      logger.error(`Error calculating time left: ${e instanceof Error ? e.message : "Unknown error"}`);
+      return 0;
+    }
+  }, [signal.expiresAt]);
   
   useEffect(() => {
     // Set initial time left
     setTimeLeft(calculateTimeLeft);
     
-    // Update timer less frequently (every second is fine for countdown)
+    // Update timer every second for countdown
     const timer = setInterval(() => {
       setTimeLeft(prev => {
         const newTime = Math.max(0, prev - 1);
-        
-        /* Comment out notification threshold checks
-        // Check notification thresholds less frequently (only when time changes significantly)
-        if ((prev % 5 === 0) && exchangeConnected) { // check every 5 seconds
-          handleTimeThresholdNotifications(newTime);
-        }
-        */
         return newTime;
       });
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [signal.expiresAt, exchangeConnected]);
-
-  // Comment out notification threshold processing
-  /*
-  // Move notification threshold processing to a throttled function
-  const handleTimeThresholdNotifications = (secondsLeft: number) => {
-    // Only send notifications if 30 seconds have passed since the last one
-    const now = Date.now();
-    if (now - lastNotificationTime < 30000) {
-      return;
-    }
-    
-    // Only show notifications if exchange is connected
-    if (!exchangeConnected) return;
-    
-    // Notification thresholds in seconds - reduce number of thresholds
-    const thresholds = [300, 60]; // Notify at 5 minutes and 1 minute only
-    
-    // Find the closest threshold that matches our current time
-    const threshold = thresholds.find(t => 
-      secondsLeft <= t + 2 && 
-      secondsLeft >= t - 2 && 
-      !notificationsSent.has(t)
-    );
-    
-    if (threshold) {
-      // Mark this threshold as notified
-      setNotificationsSent(prev => {
-        const updated = new Set(prev);
-        updated.add(threshold);
-        return updated;
-      });
-      setLastNotificationTime(now);
-      
-      // Format the time for display
-      const timeDisplay = threshold >= 60 ? 
-        `${Math.floor(threshold / 60)} minute${Math.floor(threshold / 60) !== 1 ? 's' : ''}` : 
-        `${threshold} seconds`;
-      
-      // Show toast notification
-      toast.warning(`${signal.type} signal expires in ${timeDisplay}`, {
-        description: `Auto-execution will occur if no action is taken`,
-        duration: 10000, // 10 seconds
-      });
-      
-      // Try Telegram notification - but with less overhead
-      try {
-        // Trigger haptic feedback
-        telegramService.triggerHapticFeedback('notification');
-        
-        // Show popup only for critical thresholds
-        if (threshold <= 60) {
-          telegramService.showPopup(
-            `⚠️ ${signal.type} signal for ${signal.token} expires in ${timeDisplay}`,
-            [{ type: "default", text: "View" }],
-            () => {
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }
-          );
-        }
-      } catch (error) {
-        // Don't log every error to reduce console noise
-        if (threshold <= 60) {
-          logger.error(`Error sending threshold notification: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-      }
-    }
-    
-    // Special handling for the very last seconds - reduced frequency
-    if (secondsLeft <= 5 && secondsLeft > 0 && secondsLeft % 2 === 0) {
-      // Trigger haptic feedback less often
-      telegramService.triggerHapticFeedback('impact');
-    }
-  };
-  */
+  }, [calculateTimeLeft]);
 
   const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, "0")}`
-  }
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number) => {
-    setIsLoading(true)
-    setError(null)
-    setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip")
+    // Ensure signal has a valid ID
+    if (!signal.id) {
+      logger.error("Cannot process action: Signal ID is missing");
+      setError("Invalid signal data. Cannot process action.");
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip");
 
     try {
-      await onAction(action, signal.id, percentage)
+      await onAction(action, signal.id, percentage);
       
-      /* Comment out haptic feedback
-      // Trigger appropriate haptic feedback
-      if (action === "accept" || action === "accept-partial") {
-        telegramService.triggerHapticFeedback('notification');
-      } else {
-        telegramService.triggerHapticFeedback('selection');
+      // Try to trigger haptic feedback for better UX
+      try {
+        telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification");
+      } catch (e) {
+        // Ignore errors with haptics
       }
-      */
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to process action")
+      const errorMessage = err instanceof Error ? err.message : "Failed to process action";
+      setError(errorMessage);
+      logger.error(`Error processing signal action: ${errorMessage}`);
     } finally {
-      setIsLoading(false)
-      setActionType(null)
+      setIsLoading(false);
+      setActionType(null);
     }
   }
 
@@ -264,7 +195,7 @@ export function SignalCard({
         )}
 
         {/* Ekin API specific data */}
-        {((signal.positives ?? []).length > 0 || (signal.warnings ?? []).length > 0) && (
+        {((signal.positives && signal.positives.length > 0) || (signal.warnings && signal.warnings.length > 0)) && (
           <div className="mt-4">
             <Button
               variant="ghost"
