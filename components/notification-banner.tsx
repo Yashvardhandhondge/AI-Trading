@@ -83,6 +83,7 @@ export function NotificationBanner({ userId }: NotificationBannerProps) {
 
   // Mark notification as read
   const markAsRead = async (notificationId: string) => {
+    /* Temporarily commented out for debugging
     try {
       await fetch(`/api/notifications/${notificationId}/read`, {
         method: "POST",
@@ -104,6 +105,21 @@ export function NotificationBanner({ userId }: NotificationBannerProps) {
       }
     } catch (error) {
       logger.error(`Error marking notification as read: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+    */
+    console.log('Notification mark as read disabled:', notificationId);
+    // For now, just update the UI without making the API call
+    setNotifications(prevNotifications => 
+      prevNotifications.filter(n => n.id !== notificationId)
+    )
+    
+    if (activeNotification && activeNotification.id === notificationId) {
+      if (notifications.length > 1) {
+        setActiveNotification(notifications[1])
+      } else {
+        setActiveNotification(null)
+        setShowBanner(false)
+      }
     }
   }
 
