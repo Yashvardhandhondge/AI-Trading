@@ -16,27 +16,13 @@ interface ResponseWithSocket extends NextApiResponse {
 
 /**
  * This handler sets up a Socket.io server for real-time communication.
- * It's optimized to avoid polling issues in Vercel deployments.
+ * It's optimized for Vercel deployments.
  */
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
-  }
-  
-  // For polling requests, return a no-op response with long timeouts
-  // This helps prevent excessive reconnection attempts
-  if (req.url?.includes('polling')) {
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Content-Type', 'application/json');
-    
-    return res.status(200).json({
-      type: 'noop',
-      pingInterval: 60000,   // 60 seconds between pings
-      pingTimeout: 90000,    // 90 second timeout
-      sid: `mock-${Date.now()}` // Mock session ID
-    });
   }
   
   // Cast the response to our extended type
@@ -61,12 +47,13 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       pingInterval: 60000,   // 60 seconds between pings
       pingTimeout: 90000,    // 90 second timeout
       connectTimeout: 10000, // 10 second connection timeout
-      transports: ['websocket'], // WebSocket only, no polling
+      transports: ['websocket', 'polling'], // Allow both WebSocket and polling
       cors: {
         origin: '*',
         methods: ['GET', 'POST', 'OPTIONS'],
         allowedHeaders: ['Content-Type', 'Authorization']
-      }
+      },
+      allowEIO3: true // Support for older clients
     });
     
     // Store the io instance on the server object
@@ -84,11 +71,23 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
         socket.emit('room-joined', { userId, room: `user-${userId}` });
       });
       
-      socket.on('disconnect', () => {
-        logger.info(`Client disconnected: ${socket.id}`);
+      socket.on('error', (error) => {
+        logger.info(`Socket error: ${error.message}`);
+      });
+      
+      socket.on('disconnect', (reason) => {
+        logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`);
       });
     });
+    
+    // Handle server-level errors
+    io.engine.on('connection_error', (err) => {
+      logger.info(`Connection error: ${err.message}`);
+    });
   }
+  
+  // Get reference to the existing Socket.io server
+  const socketIoServer = response.socket.server.io;
   
   // End the response
   res.end();
