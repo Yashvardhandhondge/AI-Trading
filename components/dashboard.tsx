@@ -1,15 +1,14 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, ArrowUp, ArrowDown, Settings, Info } from "lucide-react"
+import { Loader2, ArrowUp, ArrowDown, Settings, Info, RefreshCw } from "lucide-react"
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
 import { formatCurrency } from "@/lib/utils"
 import { logger } from "@/lib/logger"
 import { toast } from "sonner"
-import { useSocketStore } from "@/lib/socket-client"
 import type { SessionUser } from "@/lib/auth"
 
 interface Signal {
@@ -28,10 +27,9 @@ interface Signal {
 
 interface DashboardProps {
   user: SessionUser
-  socket: any
 }
 
-export function Dashboard({ user, socket }: DashboardProps) {
+export function Dashboard({ user }: DashboardProps) {
   const [signals, setSignals] = useState<Signal[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [userHoldings, setUserHoldings] = useState<Record<string, number>>({})
@@ -39,11 +37,18 @@ export function Dashboard({ user, socket }: DashboardProps) {
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [positionAccumulation, setPositionAccumulation] = useState<Record<string, number>>({})
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
+  const [refreshing, setRefreshing] = useState(false)
   
-  // Fetch active signals
-  const fetchSignals = async () => {
+  // Fetch active signals - wrapped in useCallback to be reusable
+  const fetchSignals = useCallback(async (showLoadingState = true) => {
     try {
-      setIsLoading(true)
+      if (showLoadingState) {
+        setIsLoading(true)
+      } else {
+        setRefreshing(true)
+      }
+      
       setError(null)
       
       // We'll fetch multiple signals instead of just the active one
@@ -64,13 +69,18 @@ export function Dashboard({ user, socket }: DashboardProps) {
       } else {
         setSignals([])
       }
+      
+      // Update last fetched timestamp
+      setLastUpdated(new Date())
+      
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load signals")
       logger.error(`Error fetching signals: ${err instanceof Error ? err.message : "Unknown error"}`)
     } finally {
       setIsLoading(false)
+      setRefreshing(false)
     }
-  }
+  }, [user.id])
   
   // Fetch user holdings
   const fetchUserHoldings = async () => {
@@ -109,38 +119,58 @@ export function Dashboard({ user, socket }: DashboardProps) {
     }
     
     // Refresh signals every 2 minutes
-    const intervalId = setInterval(fetchSignals, 120000)
-    
-    // Listen for socket events
-    if (socket) {
-      socket.on("new-signal", (signal: Signal) => {
-        // Add the new signal to the list
-        setSignals(prev => {
-          const exists = prev.some(s => s.id === signal.id)
-          if (exists) return prev
-          return [signal, ...prev]
-        })
-        
-        // Show notification
-        toast(`New ${signal.type} signal for ${signal.token}`, {
-          description: `Price: ${formatCurrency(signal.price)}`,
-          action: {
-            label: "View",
-            onClick: () => {
-              window.scrollTo({ top: 0, behavior: 'smooth' })
-            }
-          }
-        })
-      })
-    }
+    const intervalId = setInterval(() => fetchSignals(false), 120000)
     
     return () => {
       clearInterval(intervalId)
-      if (socket) {
-        socket.off("new-signal")
-      }
     }
-  }, [user.id, user.exchangeConnected, socket])
+  }, [user.id, user.exchangeConnected, fetchSignals])
+  
+  // Handle manual refresh
+  const handleRefresh = () => {
+    fetchSignals(false)
+  }
+  
+  // Check for new signals periodically
+  const checkForNewSignals = useCallback(async () => {
+    try {
+      const response = await fetch("/api/signals/latest")
+      
+      if (response.ok) {
+        const data = await response.json()
+        if (data.signal && data.signal.id) {
+          // Check if this is a new signal not in our current list
+          const isNew = !signals.some(s => s.id === data.signal.id)
+          
+          if (isNew) {
+            // Add the new signal to the list
+            setSignals(prev => {
+              return [data.signal, ...prev]
+            })
+            
+            // Show notification
+            toast(`New ${data.signal.type} signal for ${data.signal.token}`, {
+              description: `Price: ${formatCurrency(data.signal.price)}`,
+              action: {
+                label: "View",
+                onClick: () => {
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }
+              }
+            })
+          }
+        }
+      }
+    } catch (error) {
+      logger.error(`Error checking for new signals: ${error instanceof Error ? error.message : "Unknown error"}`)
+    }
+  }, [signals])
+  
+  // Check for new signals every minute
+  useEffect(() => {
+    const checkInterval = setInterval(checkForNewSignals, 60000)
+    return () => clearInterval(checkInterval)
+  }, [checkForNewSignals])
   
   // Handle signal actions (Buy/Skip)
   const handleSignalAction = async (action: "accept" | "skip", signal: Signal) => {
@@ -220,7 +250,7 @@ export function Dashboard({ user, socket }: DashboardProps) {
     }
   }
   
-  if (isLoading) {
+  if (isLoading && signals.length === 0) {
     return (
       <div className="flex justify-center items-center p-8">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -244,9 +274,20 @@ export function Dashboard({ user, socket }: DashboardProps) {
     <div className="container mx-auto p-4 pb-20">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold">Bot Trades</h2>
-        <Button variant="ghost" size="icon" onClick={fetchSignals}>
-          <Settings className="h-5 w-5" />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className={refreshing ? "animate-spin" : ""}
+          >
+            <RefreshCw className="h-5 w-5" />
+          </Button>
+          <Button variant="ghost" size="icon">
+            <Settings className="h-5 w-5" />
+          </Button>
+        </div>
       </div>
       
       {error && (
@@ -254,6 +295,10 @@ export function Dashboard({ user, socket }: DashboardProps) {
           {error}
         </div>
       )}
+      
+      <div className="text-xs text-muted-foreground mb-2">
+        Last updated: {lastUpdated.toLocaleTimeString()}
+      </div>
       
       {signals.length === 0 ? (
         <Card>
