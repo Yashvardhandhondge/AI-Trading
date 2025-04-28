@@ -11,7 +11,6 @@ import { Badge } from "@/components/ui/badge"
 import { logger } from "@/lib/logger"
 import { tradingProxy } from "@/lib/trading-proxy"
 import { toast } from "sonner"
-import { useSocketStore } from "@/lib/socket-client"
 import { telegramService } from "@/lib/telegram-service"
 
 // Define types
@@ -49,18 +48,11 @@ export default function SignalDashboard({
   const [activeSignal, setActiveSignal] = useState<Signal | null>(null)
   const [showConnectExchangeModal, setShowConnectExchangeModal] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Comment out notification-related state
-  // const [unreadNotifications, setUnreadNotifications] = useState<number>(0)
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date())
   const [lastNotificationId, setLastNotificationId] = useState<string | null>(null)
-  // const [notificationPermissionRequested, setNotificationPermissionRequested] = useState(false)
-  // const [notificationSent, setNotificationSent] = useState(false)
   const [positionAccumulation, setPositionAccumulation] = useState<Record<string, number>>({})
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [lastSignalCheckTime, setLastSignalCheckTime] = useState<number>(Date.now())
-  
-  // Get socket from store
-  const { socket } = useSocketStore()
 
   // Create a throttled fetch signals function
   const fetchSignals = useCallback(async (forceRefresh = false) => {
@@ -114,9 +106,6 @@ export default function SignalDashboard({
           } catch (e) {
             // Ignore errors
           }
-          
-          // Reset notification flag for new signals
-          // setNotificationSent(false); 
         }
         
         setActiveSignal(data.signal);
@@ -138,27 +127,55 @@ export default function SignalDashboard({
     }
   }, [activeSignal, userId, isRefreshing, lastSignalCheckTime]);
 
-  // Comment out notification fetching
-  /*
-  const fetchUnreadNotifications = useCallback(async () => {
-    // Don't check too often
-    if (Date.now() - lastSignalCheckTime < 30000) {
-      return;
-    }
-    
+  // Check for new signals periodically
+  const checkForNewSignals = useCallback(async () => {
     try {
-      const response = await fetch("/api/notifications/unread");
+      const response = await fetch("/api/signals/latest");
+      
       if (response.ok) {
         const data = await response.json();
-        if (data.notifications) {
-          setUnreadNotifications(data.notifications.length);
+        if (data.signal && data.signal.id) {
+          // Check if this is a new signal not in our current list
+          const isNew = !activeSignal || activeSignal.id !== data.signal.id;
+          
+          if (isNew) {
+            // Add the new signal to the state
+            setActiveSignal(data.signal);
+            
+            // Don't show multiple notifications for the same signal
+            if (data.signal.id !== lastNotificationId) {
+              setLastNotificationId(data.signal.id);
+              
+              // Show notification
+              toast(`New ${data.signal.type} signal for ${data.signal.token}`, {
+                description: `Price: ${data.signal.price}`,
+                action: {
+                  label: "View",
+                  onClick: () => {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }
+                }
+              });
+              
+              // Try Telegram's native notification if available
+              try {
+                telegramService.triggerHapticFeedback('notification');
+                telegramService.showPopup(
+                  `🔔 New ${data.signal.type} signal for ${data.signal.token}`,
+                  [{ type: "default", text: "View" }],
+                  () => window.scrollTo({ top: 0, behavior: 'smooth' })
+                );
+              } catch (e) {
+                // Ignore errors with Telegram API
+              }
+            }
+          }
         }
       }
     } catch (error) {
-      // Don't log error to reduce noise
+      logger.error(`Error checking for new signals: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
-  }, [lastSignalCheckTime]);
-  */
+  }, [activeSignal, lastNotificationId]);
 
   useEffect(() => {
     // Load position accumulation data from localStorage only once at component mount
@@ -172,122 +189,18 @@ export default function SignalDashboard({
     }
     
     fetchSignals(true);
-    // Comment out notification fetching
-    // fetchUnreadNotifications();
     
-    // Refresh signals every 1 minute (reduced from 2 minutes)
+    // Refresh signals every 1 minute
     const signalIntervalId = setInterval(() => fetchSignals(), 60000);
     
-    // Comment out notification interval
-    // const notificationIntervalId = setInterval(fetchUnreadNotifications, 120000);
+    // Check for new signals every 30 seconds
+    const newSignalCheckInterval = setInterval(() => checkForNewSignals(), 30000);
     
     return () => {
       clearInterval(signalIntervalId);
-      // clearInterval(notificationIntervalId);
+      clearInterval(newSignalCheckInterval);
     };
-  }, [userId]);
-
-  // Comment out notification effect
-  /*
-  // Enhanced notification effect for active signals - with debouncing
-  useEffect(() => {
-    if (activeSignal && !notificationSent) {
-      // Debounce notifications
-      const notificationTimeout = setTimeout(() => {
-        try {
-          // Send notification with less overhead
-          telegramService.triggerHapticFeedback('notification');
-          
-          // Only show popup for critical signals
-          if (new Date(activeSignal.expiresAt).getTime() - Date.now() < 5 * 60 * 1000) {
-            telegramService.showPopup(
-              `🔔 New ${activeSignal.type} signal for ${activeSignal.token}`,
-              [{ type: "default", text: "View" }],
-              () => window.scrollTo({ top: 0, behavior: 'smooth' })
-            );
-          }
-          
-          setNotificationSent(true);
-        } catch (error) {
-          // Ignore errors
-        }
-      }, 800); // Small delay to prevent multiple notifications
-      
-      return () => clearTimeout(notificationTimeout);
-    }
-  }, [activeSignal, notificationSent]);
-  */
-
-  // Socket listener effect with debouncing - modify to remove notification parts
-  useEffect(() => {
-    if (!socket) return;
-    
-    // Dictionary to keep track of when we last processed each event type
-    const lastProcessed: Record<string, number> = {};
-    
-    const handleNewSignal = (signal: Signal) => {
-      // Debounce by signal type
-      const now = Date.now();
-      const eventKey = `${signal.type}-${signal.token}`;
-      
-      if (lastProcessed[eventKey] && now - lastProcessed[eventKey] < 10000) {
-        return; // Skip if processed in the last 10 seconds
-      }
-      
-      lastProcessed[eventKey] = now;
-      
-      // Don't show multiple notifications for the same signal
-      if (signal.id === lastNotificationId) return;
-      
-      setLastNotificationId(signal.id);
-      
-      // Update the signal list with less overhead
-      setActiveSignal(signal);
-      // Comment out notification flag
-      // setNotificationSent(false);
-    };
-    
-    // Setup socket listeners
-    socket.on("new-signal", handleNewSignal);
-    
-    // Simplify notification handler
-    socket.on("notification", (notification: any) => {
-      // Debounce notifications
-      const now = Date.now();
-      if (lastProcessed['notification'] && now - lastProcessed['notification'] < 10000) {
-        return;
-      }
-      lastProcessed['notification'] = now;
-      
-      // Process notification with minimum necessary logic
-      if (notification.type === "signal" && notification.data) {
-        fetchSignals(true); // Force fetch signals to get the latest
-      }
-    });
-    
-    return () => {
-      socket.off("new-signal", handleNewSignal);
-      socket.off("notification");
-    };
-  }, [socket, lastNotificationId, fetchSignals]);
-
-  // Comment out notification permission request
-  /*
-  // Request Telegram notification permissions on component mount
-  useEffect(() => {
-    if (!notificationPermissionRequested) {
-      // Request notification permissions
-      telegramService.requestNotificationPermission().then(granted => {
-        if (granted) {
-          console.log("Notification permission granted")
-        } else {
-          console.log("Notification permission denied")
-        }
-        setNotificationPermissionRequested(true)
-      })
-    }
-  }, [notificationPermissionRequested])
-  */
+  }, [userId, fetchSignals, checkForNewSignals]);
 
   const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => {
     try {
@@ -524,16 +437,6 @@ export default function SignalDashboard({
           )}
         </div>
         <div className="flex items-center space-x-2">
-          {/* Comment out notification badge 
-          {unreadNotifications > 0 && (
-            <div className="flex items-center">
-              <Bell className="h-4 w-4 mr-1 text-blue-500" />
-              <Badge variant="outline" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">
-                {unreadNotifications}
-              </Badge>
-            </div>
-          )}
-          */}
           <Button 
             variant="ghost" 
             size="sm" 

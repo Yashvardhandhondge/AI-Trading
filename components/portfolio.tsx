@@ -3,13 +3,13 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Loader2, TrendingUp, TrendingDown, ExternalLink } from "lucide-react"
-import type { Socket } from "socket.io-client"
+import { Loader2, TrendingUp, TrendingDown, ExternalLink, RefreshCw } from "lucide-react"
 import type { SessionUser } from "@/lib/auth"
 import { formatCurrency } from "@/lib/utils"
 import { tradingProxy } from "@/lib/trading-proxy"
 import { logger } from "@/lib/logger"
 import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
+import { Button } from "@/components/ui/button"
 
 interface UserHolding {
   token: string
@@ -23,7 +23,6 @@ interface UserHolding {
 
 interface PortfolioProps {
   user: SessionUser
-  socket: Socket | null
 }
 
 interface PortfolioData {
@@ -35,7 +34,7 @@ interface PortfolioData {
   holdings: UserHolding[]
 }
 
-export function Portfolio({ user, socket }: PortfolioProps) {
+export function Portfolio({ user }: PortfolioProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null)
   const [activeTab, setActiveTab] = useState("overview")
@@ -97,27 +96,46 @@ export function Portfolio({ user, socket }: PortfolioProps) {
     }
   }, [user.id, user.exchangeConnected, portfolio, lastUpdated, isRefreshing]);
 
+  // Check for portfolio updates periodically
+  const checkForPortfolioUpdates = useCallback(async () => {
+    try {
+      // Only check if exchange is connected
+      if (!user.exchangeConnected) return;
+      
+      const response = await fetch('/api/portfolio/changes');
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.hasChanges) {
+          // If there are changes, trigger a full refresh
+          fetchPortfolioData(true);
+        }
+      }
+    } catch (error) {
+      // Don't log errors for this quiet background check
+    }
+  }, [user.exchangeConnected, fetchPortfolioData]);
+
+  // Handle manual refresh
+  const handleRefresh = () => {
+    fetchPortfolioData(true);
+  };
+
   useEffect(() => {
     fetchPortfolioData();
     
     // Set a reasonable interval to refresh the portfolio data (every 2 minutes)
-    const intervalId = setInterval(() => fetchPortfolioData(), 120000);
+    const refreshIntervalId = setInterval(() => fetchPortfolioData(), 120000);
     
-    // Listen for socket events related to portfolio updates
-    if (socket && user.exchangeConnected) {
-      socket.on("portfolio-update", (data: any) => {
-        setPortfolio(data);
-        setLastUpdated(Date.now());
-      });
-    }
+    // Check for updates more frequently but with lighter requests (every 30 seconds)
+    const updateCheckIntervalId = setInterval(() => checkForPortfolioUpdates(), 30000);
     
     return () => {
-      clearInterval(intervalId);
-      if (socket) {
-        socket.off("portfolio-update");
-      }
+      clearInterval(refreshIntervalId);
+      clearInterval(updateCheckIntervalId);
     };
-  }, [user.id, user.exchangeConnected, socket, fetchPortfolioData]);
+  }, [user.id, user.exchangeConnected, fetchPortfolioData, checkForPortfolioUpdates]);
   
   // Calculate derived data only when needed (memoize)
   const portfolioStats = useMemo(() => {
@@ -193,12 +211,28 @@ export function Portfolio({ user, socket }: PortfolioProps) {
     <div className="container mx-auto p-4 pb-20">
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">Portfolio</h1>
-        {isRefreshing && (
-          <div className="flex items-center text-sm text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin mr-1" />
-            <span>Updating...</span>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {isRefreshing ? (
+            <div className="flex items-center text-sm text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              <span>Updating...</span>
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground">
+              Last updated: {new Date(lastUpdated).toLocaleTimeString()}
+            </div>
+          )}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="ml-2"
+          >
+            <RefreshCw className={`h-4 w-4 mr-1 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
