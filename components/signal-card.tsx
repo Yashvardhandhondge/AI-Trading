@@ -46,10 +46,13 @@ export function SignalCard({
   const [error, setError] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
   const [actionType, setActionType] = useState<"full" | "partial" | "skip" | null>(null)
+  // Comment out notification tracking
+  /*
   // To avoid duplicate notifications
   const [notificationsSent, setNotificationsSent] = useState<Set<number>>(new Set())
   // Track the last notification time to reduce frequency
   const [lastNotificationTime, setLastNotificationTime] = useState(0)
+  */
   
   // Calculate time left only when needed
   const calculateTimeLeft = useMemo(() => {
@@ -68,10 +71,12 @@ export function SignalCard({
       setTimeLeft(prev => {
         const newTime = Math.max(0, prev - 1);
         
+        /* Comment out notification threshold checks
         // Check notification thresholds less frequently (only when time changes significantly)
         if ((prev % 5 === 0) && exchangeConnected) { // check every 5 seconds
           handleTimeThresholdNotifications(newTime);
         }
+        */
         return newTime;
       });
     }, 1000);
@@ -79,6 +84,8 @@ export function SignalCard({
     return () => clearInterval(timer);
   }, [signal.expiresAt, exchangeConnected]);
 
+  // Comment out notification threshold processing
+  /*
   // Move notification threshold processing to a throttled function
   const handleTimeThresholdNotifications = (secondsLeft: number) => {
     // Only send notifications if 30 seconds have passed since the last one
@@ -149,6 +156,7 @@ export function SignalCard({
       telegramService.triggerHapticFeedback('impact');
     }
   };
+  */
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -164,12 +172,14 @@ export function SignalCard({
     try {
       await onAction(action, signal.id, percentage)
       
+      /* Comment out haptic feedback
       // Trigger appropriate haptic feedback
       if (action === "accept" || action === "accept-partial") {
         telegramService.triggerHapticFeedback('notification');
       } else {
         telegramService.triggerHapticFeedback('selection');
       }
+      */
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to process action")
     } finally {

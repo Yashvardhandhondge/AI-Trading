@@ -49,11 +49,12 @@ export default function SignalDashboard({
   const [activeSignal, setActiveSignal] = useState<Signal | null>(null)
   const [showConnectExchangeModal, setShowConnectExchangeModal] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [unreadNotifications, setUnreadNotifications] = useState<number>(0)
+  // Comment out notification-related state
+  // const [unreadNotifications, setUnreadNotifications] = useState<number>(0)
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date())
   const [lastNotificationId, setLastNotificationId] = useState<string | null>(null)
-  const [notificationPermissionRequested, setNotificationPermissionRequested] = useState(false)
-  const [notificationSent, setNotificationSent] = useState(false)
+  // const [notificationPermissionRequested, setNotificationPermissionRequested] = useState(false)
+  // const [notificationSent, setNotificationSent] = useState(false)
   const [positionAccumulation, setPositionAccumulation] = useState<Record<string, number>>({})
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [lastSignalCheckTime, setLastSignalCheckTime] = useState<number>(Date.now())
@@ -114,7 +115,8 @@ export default function SignalDashboard({
             // Ignore errors
           }
           
-          setNotificationSent(false); // Reset notification flag for new signals
+          // Reset notification flag for new signals
+          // setNotificationSent(false); 
         }
         
         setActiveSignal(data.signal);
@@ -136,6 +138,8 @@ export default function SignalDashboard({
     }
   }, [activeSignal, userId, isRefreshing, lastSignalCheckTime]);
 
+  // Comment out notification fetching
+  /*
   const fetchUnreadNotifications = useCallback(async () => {
     // Don't check too often
     if (Date.now() - lastSignalCheckTime < 30000) {
@@ -154,6 +158,7 @@ export default function SignalDashboard({
       // Don't log error to reduce noise
     }
   }, [lastSignalCheckTime]);
+  */
 
   useEffect(() => {
     // Load position accumulation data from localStorage only once at component mount
@@ -167,20 +172,23 @@ export default function SignalDashboard({
     }
     
     fetchSignals(true);
-    fetchUnreadNotifications();
+    // Comment out notification fetching
+    // fetchUnreadNotifications();
     
     // Refresh signals every 1 minute (reduced from 2 minutes)
     const signalIntervalId = setInterval(() => fetchSignals(), 60000);
     
-    // Refresh notification count less frequently
-    const notificationIntervalId = setInterval(fetchUnreadNotifications, 120000);
+    // Comment out notification interval
+    // const notificationIntervalId = setInterval(fetchUnreadNotifications, 120000);
     
     return () => {
       clearInterval(signalIntervalId);
-      clearInterval(notificationIntervalId);
+      // clearInterval(notificationIntervalId);
     };
   }, [userId]);
 
+  // Comment out notification effect
+  /*
   // Enhanced notification effect for active signals - with debouncing
   useEffect(() => {
     if (activeSignal && !notificationSent) {
@@ -208,8 +216,9 @@ export default function SignalDashboard({
       return () => clearTimeout(notificationTimeout);
     }
   }, [activeSignal, notificationSent]);
+  */
 
-  // Socket listener effect with debouncing
+  // Socket listener effect with debouncing - modify to remove notification parts
   useEffect(() => {
     if (!socket) return;
     
@@ -234,12 +243,14 @@ export default function SignalDashboard({
       
       // Update the signal list with less overhead
       setActiveSignal(signal);
-      setNotificationSent(false);
+      // Comment out notification flag
+      // setNotificationSent(false);
     };
     
     // Setup socket listeners
     socket.on("new-signal", handleNewSignal);
     
+    // Simplify notification handler
     socket.on("notification", (notification: any) => {
       // Debounce notifications
       const now = Date.now();
@@ -260,6 +271,8 @@ export default function SignalDashboard({
     };
   }, [socket, lastNotificationId, fetchSignals]);
 
+  // Comment out notification permission request
+  /*
   // Request Telegram notification permissions on component mount
   useEffect(() => {
     if (!notificationPermissionRequested) {
@@ -274,6 +287,7 @@ export default function SignalDashboard({
       })
     }
   }, [notificationPermissionRequested])
+  */
 
   const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => {
     try {
@@ -510,6 +524,7 @@ export default function SignalDashboard({
           )}
         </div>
         <div className="flex items-center space-x-2">
+          {/* Comment out notification badge 
           {unreadNotifications > 0 && (
             <div className="flex items-center">
               <Bell className="h-4 w-4 mr-1 text-blue-500" />
@@ -518,6 +533,7 @@ export default function SignalDashboard({
               </Badge>
             </div>
           )}
+          */}
           <Button 
             variant="ghost" 
             size="sm" 
