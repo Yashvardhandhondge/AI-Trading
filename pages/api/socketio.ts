@@ -74,7 +74,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     
     // Set up connection handler
     io.on('connection', (socket) => {
-      logger.info('Client connected:', { clientId: socket.id });
+      logger.info(`Client connected: ${socket.id}`);
       
       socket.on('join-user-room', (userId: string) => {
         socket.join(`user-${userId}`);
@@ -85,7 +85,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       });
       
       socket.on('disconnect', () => {
-        logger.info('Client disconnected:', { clientId: socket.id });
+        logger.info(`Client disconnected: ${socket.id}`);
       });
     });
   }
