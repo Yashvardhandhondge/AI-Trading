@@ -1,5 +1,7 @@
+// lib/db.ts - Update to include SystemLog model
 import mongoose from "mongoose"
 import crypto from "crypto"
+import { SystemLog } from "./schemas/system-log-schema"
 
 declare global {
   var mongoose: { conn: any; promise: any } | undefined
@@ -82,6 +84,10 @@ const signalSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   expiresAt: { type: Date, required: true },
   autoExecuted: { type: Boolean, default: false },
+  link: String,
+  positives: [String],
+  warnings: [String],
+  warning_count: Number
 })
 
 const tradeSchema = new mongoose.Schema({
@@ -150,4 +156,5 @@ export const models = {
   Cycle: mongoose.models.Cycle || mongoose.model("Cycle", cycleSchema),
   Portfolio: mongoose.models.Portfolio || mongoose.model("Portfolio", portfolioSchema),
   Notification: mongoose.models.Notification || mongoose.model("Notification", notificationSchema),
+  SystemLog: SystemLog // Include our new SystemLog model
 }

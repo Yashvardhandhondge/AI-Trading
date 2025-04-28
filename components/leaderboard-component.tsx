@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Loader2, Trophy, ArrowUp, ArrowDown } from "lucide-react"
+import { Loader2, Trophy, ArrowUp, ArrowDown, AlertCircle } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { formatCurrency, getTimeAgo } from "@/lib/utils"
+import { logger } from "@/lib/logger"
 
 interface LeaderboardUser {
   id: string
@@ -24,25 +25,34 @@ interface TradeAction {
   timestamp: string
 }
 
-export function Leaderboard() {
+export function LeaderboardComponent() {
   const [isLoading, setIsLoading] = useState(true)
   const [users, setUsers] = useState<LeaderboardUser[]>([])
   const [selectedUser, setSelectedUser] = useState<LeaderboardUser | null>(null)
   const [tradeActions, setTradeActions] = useState<TradeAction[]>([])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchLeaderboard = async () => {
       try {
+        setIsLoading(true)
         const response = await fetch("/api/leaderboard")
+        
         if (!response.ok) {
-          throw new Error("Failed to fetch leaderboard data")
+          throw new Error(`Failed to fetch leaderboard data: ${response.status}`)
         }
 
         const data = await response.json()
         setUsers(data.users || [])
+        
+        logger.info(`Fetched ${data.users?.length || 0} users for leaderboard`, {
+          context: "Leaderboard"
+        })
       } catch (error) {
-        console.error("Error fetching leaderboard:", error)
+        const errorMessage = error instanceof Error ? error.message : "Unknown error"
+        setError(errorMessage)
+        logger.error(`Error fetching leaderboard: ${errorMessage}`)
       } finally {
         setIsLoading(false)
       }
@@ -54,14 +64,21 @@ export function Leaderboard() {
   const fetchUserTrades = async (userId: string) => {
     try {
       const response = await fetch(`/api/users/${userId}/trades`)
+      
       if (!response.ok) {
-        throw new Error("Failed to fetch user trades")
+        throw new Error(`Failed to fetch user trades: ${response.status}`)
       }
 
       const data = await response.json()
       setTradeActions(data.trades || [])
+      
+      logger.info(`Fetched ${data.trades?.length || 0} trades for user ${userId}`, {
+        context: "Leaderboard"
+      })
     } catch (error) {
-      console.error("Error fetching user trades:", error)
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+      logger.error(`Error fetching user trades: ${errorMessage}`)
+      setTradeActions([])
     }
   }
 
@@ -76,6 +93,16 @@ export function Leaderboard() {
       <div className="flex h-full items-center justify-center p-4">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <span className="ml-2">Loading leaderboard...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="container mx-auto p-4 flex flex-col items-center justify-center">
+        <AlertCircle className="h-10 w-10 text-destructive mb-4" />
+        <h2 className="text-xl font-semibold mb-2">Failed to load leaderboard</h2>
+        <p className="text-muted-foreground">{error}</p>
       </div>
     )
   }
@@ -134,7 +161,7 @@ export function Leaderboard() {
       ) : (
         <Card>
           <CardContent className="p-6 text-center">
-            <p className="text-muted-foreground">No leaderboard data available</p>
+            <p className="text-muted-foreground">No leaderboard data available yet</p>
           </CardContent>
         </Card>
       )}

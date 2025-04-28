@@ -37,6 +37,7 @@ interface SignalDashboardProps {
   userId: number
   isExchangeConnected: boolean
   userHoldings?: UserHolding[]
+  
 }
 
 export default function SignalDashboard({ 

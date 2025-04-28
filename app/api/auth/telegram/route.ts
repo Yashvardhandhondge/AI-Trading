@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
       hash: telegramUser.hash,
       exchange: user.exchange,
       exchangeConnected: user.exchangeConnected || false,
+      riskLevel: user.riskLevel 
     }
 
     // Create session token

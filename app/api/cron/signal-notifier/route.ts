@@ -9,7 +9,6 @@
 import { NextResponse } from "next/server"
 import { connectToDatabase, models } from "@/lib/db"
 import { logger } from "@/lib/logger"
-import { notificationService } from "@/lib/notification-service"
 
 // How recently a signal should have been created to be notified (in minutes)
 const RECENT_SIGNAL_THRESHOLD_MINUTES = 15
@@ -75,14 +74,7 @@ export async function POST() {
 
         // Create notification message
         const message = `New ${signal.type} signal for ${signal.token} at ${signal.price}`
-        
-        // Send notification
-        await notificationService.createNotification({
-          userId: user._id,
-          type: "signal",
-          message,
-          relatedId: signal._id
-        })
+  
 
         // Update user's last seen tokens for this signal type if it's a BUY
         if (signal.type === "BUY") {

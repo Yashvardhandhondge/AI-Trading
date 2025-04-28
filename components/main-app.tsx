@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dashboard } from "@/components/dashboard"
@@ -9,6 +9,7 @@ import { ProfitLossView } from "./ProfitLossView"
 import { Settings } from "@/components/settings"
 import { OnboardingTutorial } from "@/components/onboarding-tutorial"
 import { NotificationBanner } from "@/components/notification-banner"
+import { LeaderboardComponent } from "./leaderboard-component" 
 import { Bell } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import type { SessionUser } from "@/lib/auth"
@@ -94,46 +95,6 @@ export function MainApp() {
     setActiveTab(value)
   }
 
-  // Function to simulate notification for demo purposes
-  // This replaces the socket-based notifications
-  const simulateNewNotification = () => {
-    const demoSignal = {
-      type: 'BUY',
-      token: 'BTC',
-      price: '$40,000'
-    }
-    
-    // Show toast notification
-    toast(`New ${demoSignal.type} signal for ${demoSignal.token}`, {
-      action: {
-        label: "View",
-        onClick: () => {
-          setActiveTab("trades")
-        }
-      }
-    })
-    
-    // Increment unread count
-    setUnreadNotifications(prev => prev + 1)
-    
-    // Try to use Telegram's native notification if available
-    telegramService.triggerHapticFeedback('notification')
-    telegramService.showPopup(
-      `🔔 New ${demoSignal.type} signal for ${demoSignal.token} at ${demoSignal.price}`,
-      [{ type: "default", text: "View Signal" }],
-      () => {
-        setActiveTab("trades")
-      }
-    )
-  }
-
-  // Set up periodic demo notifications if needed
-  useEffect(() => {
-    // For demo purposes, uncomment to enable simulated notifications
-    // const demoInterval = setInterval(simulateNewNotification, 60000);
-    // return () => clearInterval(demoInterval);
-  }, []);
-
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -175,23 +136,7 @@ export function MainApp() {
           </TabsContent>
           
           <TabsContent value="leaders" className="flex-1 p-0">
-            <div className="container mx-auto p-4">
-              <h2 className="text-xl font-bold mb-4">Leaderboard</h2>
-              <div className="divide-y border rounded-md">
-                {Array.from({length: 3}).map((_, i) => (
-                  <div key={i} className="flex items-center justify-between p-4">
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 rounded-full bg-gray-200 mr-3"></div>
-                      <div>
-                        <p className="font-medium">Moritz</p>
-                        <p className="text-sm text-muted-foreground">2,574 Trades</p>
-                      </div>
-                    </div>
-                    <div className="text-green-500 font-bold">+78%</div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <LeaderboardComponent />
           </TabsContent>
           
           <TabsContent value="pnl" className="flex-1 p-0">

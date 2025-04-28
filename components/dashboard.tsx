@@ -1,29 +1,17 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, ArrowUp, ArrowDown, Settings, Info, RefreshCw } from "lucide-react"
+import { Loader2, ArrowUp, ArrowDown, Settings, Info, RefreshCw, Clock, AlertCircle } from "lucide-react"
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
 import { formatCurrency } from "@/lib/utils"
 import { logger } from "@/lib/logger"
 import { toast } from "sonner"
 import type { SessionUser } from "@/lib/auth"
-
-interface Signal {
-  id: string
-  type: "BUY" | "SELL"
-  token: string
-  price: number
-  riskLevel: "low" | "medium" | "high"
-  createdAt: string
-  expiresAt: string
-  link?: string
-  positives?: string[]
-  warnings?: string[]
-  warning_count?: number
-}
+import { signalService, type Signal } from "@/lib/signal-service"
+import { telegramService } from "@/lib/telegram-service"
 
 interface DashboardProps {
   user: SessionUser
@@ -39,6 +27,7 @@ export function Dashboard({ user }: DashboardProps) {
   const [positionAccumulation, setPositionAccumulation] = useState<Record<string, number>>({})
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [refreshing, setRefreshing] = useState(false)
+  const [lastSignalCheckTime, setLastSignalCheckTime] = useState<number>(Date.now())
   
   // Fetch active signals - wrapped in useCallback to be reusable
   const fetchSignals = useCallback(async (showLoadingState = true) => {
@@ -51,36 +40,40 @@ export function Dashboard({ user }: DashboardProps) {
       
       setError(null)
       
-      // We'll fetch multiple signals instead of just the active one
-      const response = await fetch("/api/signals/list") // Adjust endpoint to fetch multiple signals
+      // Use our signal service to fetch signals
+      const fetchedSignals = await signalService.getSignals({
+        riskLevel: user.riskLevel as "low" | "medium" | "high",
+        limit: 10
+      })
       
-      if (!response.ok) {
-        throw new Error(`Failed to fetch signals: ${response.status}`)
-      }
-      
-      const data = await response.json()
-      
-      if (data.signals && data.signals.length > 0) {
-        setSignals(data.signals)
-        logger.info(`Fetched ${data.signals.length} signals successfully`, {
+      if (fetchedSignals.length > 0) {
+        setSignals(fetchedSignals)
+        logger.info(`Fetched ${fetchedSignals.length} signals successfully`, {
           context: "Dashboard", 
           userId: user.id
         })
       } else {
-        setSignals([])
+        logger.info("No signals returned from service", {
+          context: "Dashboard",
+          userId: user.id
+        })
+        // Keep existing signals if we have them, otherwise empty array
+        setSignals(signals => signals.length > 0 ? signals : [])
       }
       
       // Update last fetched timestamp
       setLastUpdated(new Date())
+      setLastSignalCheckTime(Date.now())
       
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load signals")
-      logger.error(`Error fetching signals: ${err instanceof Error ? err.message : "Unknown error"}`)
+      const errorMessage = err instanceof Error ? err.message : "Failed to load signals"
+      setError(errorMessage)
+      logger.error(`Error fetching signals: ${errorMessage}`)
     } finally {
       setIsLoading(false)
       setRefreshing(false)
     }
-  }, [user.id])
+  }, [user.id, user.riskLevel])
   
   // Fetch user holdings
   const fetchUserHoldings = async () => {
@@ -134,37 +127,52 @@ export function Dashboard({ user }: DashboardProps) {
   // Check for new signals periodically
   const checkForNewSignals = useCallback(async () => {
     try {
-      const response = await fetch("/api/signals/latest")
+      const result = await signalService.checkForNewSignals(lastSignalCheckTime)
       
-      if (response.ok) {
-        const data = await response.json()
-        if (data.signal && data.signal.id) {
-          // Check if this is a new signal not in our current list
-          const isNew = !signals.some(s => s.id === data.signal.id)
+      if (result.hasNew && result.newSignals.length > 0) {
+        // Add the new signals to the list (avoiding duplicates)
+        setSignals(prev => {
+          const prevIds = new Set(prev.map(s => s.id))
+          const newSignalsToAdd = result.newSignals.filter(s => !prevIds.has(s.id))
           
-          if (isNew) {
-            // Add the new signal to the list
-            setSignals(prev => {
-              return [data.signal, ...prev]
-            })
-            
-            // Show notification
-            toast(`New ${data.signal.type} signal for ${data.signal.token}`, {
-              description: `Price: ${formatCurrency(data.signal.price)}`,
-              action: {
-                label: "View",
-                onClick: () => {
-                  window.scrollTo({ top: 0, behavior: 'smooth' })
-                }
-              }
-            })
+          if (newSignalsToAdd.length === 0) return prev
+          
+          // Get the newest signal for notification
+          const newestSignal = newSignalsToAdd[0]
+          
+          // Show notification
+          toast(`New ${newestSignal.type} signal for ${newestSignal.token}`, {
+            description: `Price: ${formatCurrency(newestSignal.price)}`,
+            action: {
+              label: "View",
+              onClick: () => window.scrollTo({ top: 0, behavior: 'smooth' })
+            },
+            duration: 10000 // 10 seconds
+          })
+          
+          // Try Telegram's native notification if available
+          try {
+            telegramService.triggerHapticFeedback('notification')
+            telegramService.showPopup(
+              `🔔 New ${newestSignal.type} signal for ${newestSignal.token} at ${formatCurrency(newestSignal.price)}`,
+              [{ type: "default", text: "View" }],
+              () => window.scrollTo({ top: 0, behavior: 'smooth' })
+            )
+          } catch (e) {
+            // Ignore errors with Telegram API
           }
-        }
+          
+          // Update last check time
+          setLastSignalCheckTime(Date.now())
+          
+          // Return combined array with new signals first
+          return [...newSignalsToAdd, ...prev]
+        })
       }
     } catch (error) {
       logger.error(`Error checking for new signals: ${error instanceof Error ? error.message : "Unknown error"}`)
     }
-  }, [signals])
+  }, [lastSignalCheckTime])
   
   // Check for new signals every minute
   useEffect(() => {
@@ -173,16 +181,16 @@ export function Dashboard({ user }: DashboardProps) {
   }, [checkForNewSignals])
   
   // Handle signal actions (Buy/Skip)
-  const handleSignalAction = async (action: "accept" | "skip", signal: Signal) => {
+  const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signal: Signal, percentage?: number) => {
     try {
       // If not connected to exchange and trying to accept, show connect modal
-      if (action === "accept" && !user.exchangeConnected) {
+      if ((action === "accept" || action === "accept-partial") && !user.exchangeConnected) {
         setShowConnectModal(true)
         return
       }
       
       // For SELL signals, verify user has the token
-      if (signal.type === "SELL" && action === "accept" && (!userHoldings[signal.token] || userHoldings[signal.token] <= 0)) {
+      if (signal.type === "SELL" && (action === "accept" || action === "accept-partial") && (!userHoldings[signal.token] || userHoldings[signal.token] <= 0)) {
         toast.error(`You don't own any ${signal.token} to sell`)
         return
       }
@@ -190,18 +198,11 @@ export function Dashboard({ user }: DashboardProps) {
       // Set loading state for this specific signal
       setActionLoading(prev => ({ ...prev, [signal.id]: action }))
       
-      // Call API to handle the action
-      const response = await fetch(`/api/signals/${signal.id}/${action}`, {
-        method: "POST"
-      })
-      
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Failed to process action")
-      }
+      // Call our signal service to handle the action
+      await signalService.executeSignalAction(signal.id, action, percentage)
       
       // Handle success
-      if (action === "accept") {
+      if (action === "accept" || action === "accept-partial") {
         // Update position accumulation for BUY signals
         if (signal.type === "BUY") {
           // Increment by 10% for each buy
@@ -215,18 +216,31 @@ export function Dashboard({ user }: DashboardProps) {
           toast.success(`Successfully bought ${signal.token}`, {
             description: `Position accumulation: ${newAccumulation[signal.token]}%`
           })
-        } else {
-          // For SELL, remove from position accumulation
+        } else if (action === "accept") {
+          // For full SELL, remove from position accumulation
           const newAccumulation = { ...positionAccumulation }
           delete newAccumulation[signal.token]
           setPositionAccumulation(newAccumulation)
           localStorage.setItem('positionAccumulation', JSON.stringify(newAccumulation))
           
           toast.success(`Successfully sold ${signal.token}`)
+        } else if (action === "accept-partial" && percentage) {
+          // For partial SELL, reduce the accumulated percentage
+          const currentAccumulation = positionAccumulation[signal.token] || 0
+          if (currentAccumulation > 0) {
+            const newPercentage = Math.max(0, currentAccumulation - (currentAccumulation * (percentage / 100)))
+            const newAccumulation = { ...positionAccumulation, [signal.token]: newPercentage }
+            setPositionAccumulation(newAccumulation)
+            localStorage.setItem('positionAccumulation', JSON.stringify(newAccumulation))
+            
+            toast.success(`Successfully sold ${percentage}% of ${signal.token}`)
+          }
         }
         
         // Refresh holdings
         fetchUserHoldings()
+      } else if (action === "skip") {
+        toast.info(`Skipped ${signal.type} signal for ${signal.token}`)
       }
       
       // Mark signal as processed in the UI
@@ -237,9 +251,17 @@ export function Dashboard({ user }: DashboardProps) {
             : s
         )
       )
+      
+      // Trigger haptic feedback if available
+      try {
+        telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification")
+      } catch (e) {
+        // Ignore errors
+      }
     } catch (error) {
-      toast.error(`Action failed: ${error instanceof Error ? error.message : "Unknown error"}`)
-      logger.error(`Signal action error: ${error instanceof Error ? error.message : "Unknown error"}`)
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+      toast.error(`Action failed: ${errorMessage}`)
+      logger.error(`Signal action error: ${errorMessage}`)
     } finally {
       // Clear loading state
       setActionLoading(prev => {
@@ -270,6 +292,17 @@ export function Dashboard({ user }: DashboardProps) {
     return `${Math.floor(diffMins / 60)}h ago`
   }
   
+  // Calculate time left until auto-execution
+  const getTimeLeft = (expiresAt: string) => {
+    const expiry = new Date(expiresAt).getTime()
+    const now = new Date().getTime()
+    const diffMs = Math.max(0, expiry - now)
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffSecs = Math.floor((diffMs % 60000) / 1000)
+    
+    return `${diffMins}:${diffSecs.toString().padStart(2, '0')}`
+  }
+  
   return (
     <div className="container mx-auto p-4 pb-20">
       <div className="flex justify-between items-center mb-4">
@@ -284,7 +317,7 @@ export function Dashboard({ user }: DashboardProps) {
           >
             <RefreshCw className="h-5 w-5" />
           </Button>
-          <Button variant="ghost" size="icon">
+          <Button variant="ghost" size="icon" onClick={() => refreshing}>
             <Settings className="h-5 w-5" />
           </Button>
         </div>
@@ -292,7 +325,10 @@ export function Dashboard({ user }: DashboardProps) {
       
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4 text-red-800">
-          {error}
+          <div className="flex items-start">
+            <AlertCircle className="h-4 w-4 mt-0.5 mr-2 flex-shrink-0" />
+            <p>{error}</p>
+          </div>
         </div>
       )}
       
@@ -304,6 +340,7 @@ export function Dashboard({ user }: DashboardProps) {
         <Card>
           <CardContent className="p-6 text-center">
             <p className="text-muted-foreground">No active signals at the moment</p>
+            <p className="text-sm text-muted-foreground mt-2">We'll notify you when new signals are available</p>
           </CardContent>
         </Card>
       ) : (
@@ -315,16 +352,23 @@ export function Dashboard({ user }: DashboardProps) {
             const showBuyButton = signal.type === "BUY" || (signal.type === "SELL" && userOwnsToken)
             const accumulatedPercentage = positionAccumulation[signal.token] || 0
             const signalAction = (signal as any).action
+            const timeLeft = getTimeLeft(signal.expiresAt)
+            const isExpiringSoon = parseInt(timeLeft.split(':')[0]) === 0 // Less than 1 minute left
+            
+            // Skip signals that don't match our criteria
+            if (signal.type === "SELL" && !userOwnsToken) {
+              return null
+            }
             
             return (
-              <Card key={signal.id} className="border-l-4 border-l-primary">
+              <Card key={signal.id} className={`border-l-4 ${signal.type === "BUY" ? "border-l-green-500" : "border-l-red-500"} ${isProcessed ? "opacity-70" : ""}`}>
                 <CardContent className="p-4">
                   <div className="grid grid-cols-[auto_1fr_auto] gap-3">
                     {/* Signal type indicator */}
                     <div className="flex flex-col items-center justify-center">
                       <div className={`p-2 rounded-md ${signal.type === "BUY" ? "bg-green-100" : "bg-red-100"}`}>
-                        <span className="font-medium">
-                          {signal.type === "BUY" ? "Buy" : "SELL"}
+                        <span className={`font-medium ${signal.type === "BUY" ? "text-green-700" : "text-red-700"}`}>
+                          {signal.type}
                         </span>
                       </div>
                     </div>
@@ -332,18 +376,31 @@ export function Dashboard({ user }: DashboardProps) {
                     {/* Signal details */}
                     <div className="flex flex-col py-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-bold">${signal.token}</span>
-                        <span className="text-sm text-green-600">(+1.14%)</span>
+                        <span className="font-bold">{signal.token}</span>
+                        <span className="text-sm font-medium">${signal.price.toFixed(2)}</span>
                         <span className="text-xs text-muted-foreground">{getTimeSince(signal.createdAt)}</span>
                       </div>
+                      
+                      {/* Auto-execution timer */}
                       <div className="flex items-center gap-2 mt-1">
                         <div className="flex items-center gap-1">
-                          <span className="text-sm">Risk:</span>
-                          <span className="text-sm font-medium">64/100</span>
+                          <Clock className={`h-3.5 w-3.5 ${isExpiringSoon ? "text-red-500 animate-pulse" : "text-muted-foreground"}`} />
+                          <span className={`text-sm ${isExpiringSoon ? "text-red-500 font-medium" : "text-muted-foreground"}`}>
+                            {timeLeft}
+                          </span>
                         </div>
-                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
-                          Details
-                        </Button>
+                        
+                        {/* Risk level badge */}
+                        <Badge className="text-xs" variant="outline">
+                          {signal.riskLevel.toUpperCase()} RISK
+                        </Badge>
+                        
+                        {/* Details button */}
+                        {(signal.positives?.length || signal.warnings?.length) ? (
+                          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
+                            Details
+                          </Button>
+                        ) : null}
                       </div>
                     </div>
                     
@@ -357,25 +414,74 @@ export function Dashboard({ user }: DashboardProps) {
                     </div>
                   </div>
                   
+                  {/* Position accumulation display for BUY signals */}
+                  {signal.type === "BUY" && accumulatedPercentage > 0 && !isProcessed && (
+                    <div className="mt-3 p-2 bg-green-50 dark:bg-green-900/20 rounded-md">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs font-medium text-green-800 dark:text-green-300">Position Built:</span>
+                        <span className="text-xs font-bold text-green-800 dark:text-green-300">{accumulatedPercentage}%</span>
+                      </div>
+                      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                        <div 
+                          className="bg-green-500 h-1.5 rounded-full" 
+                          style={{ width: `${Math.min(accumulatedPercentage, 100)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  )}
+                  
                   {/* Action buttons */}
                   {!isProcessed && (
                     <div className="grid grid-cols-2 gap-2 mt-3">
-                      <Button 
-                        className={showBuyButton ? "bg-green-100 hover:bg-green-200 text-green-800" : "bg-blue-600 text-white"}
-                        disabled={!!actionLoading[signal.id]}
-                        onClick={() => handleSignalAction("accept", signal)}
-                      >
-                        {actionLoading[signal.id] === "accept" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                        {showBuyButton ? (signal.type === "BUY" ? "Buy 10%" : "Sell") : "Connect Wallet"}
-                      </Button>
-                      <Button 
-                        variant="outline"
-                        disabled={!!actionLoading[signal.id]}
-                        onClick={() => handleSignalAction("skip", signal)}
-                      >
-                        {actionLoading[signal.id] === "skip" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                        Skip
-                      </Button>
+                      {signal.type === "BUY" ? (
+                        <>
+                          <Button 
+                            className={showBuyButton ? "bg-green-600 hover:bg-green-700 text-white" : "bg-blue-600 text-white"}
+                            disabled={!!actionLoading[signal.id]}
+                            onClick={() => handleSignalAction("accept", signal)}
+                          >
+                            {actionLoading[signal.id] === "accept" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            {showBuyButton ? "Buy 10%" : "Connect Wallet"}
+                          </Button>
+                          <Button 
+                            variant="outline"
+                            disabled={!!actionLoading[signal.id]}
+                            onClick={() => handleSignalAction("skip", signal)}
+                          >
+                            {actionLoading[signal.id] === "skip" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Skip
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          {/* SELL action buttons */}
+                          <Button 
+                            className="bg-red-600 hover:bg-red-700 text-white"
+                            disabled={!!actionLoading[signal.id]}
+                            onClick={() => handleSignalAction("accept", signal)}
+                          >
+                            {actionLoading[signal.id] === "accept" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Sell Fully
+                          </Button>
+                          <Button 
+                            className="bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 hover:bg-amber-100 text-amber-800"
+                            disabled={!!actionLoading[signal.id]}
+                            onClick={() => handleSignalAction("accept-partial", signal, 50)}
+                          >
+                            {actionLoading[signal.id] === "accept-partial" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Sell 50%
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            className="col-span-2 mt-1" 
+                            onClick={() => handleSignalAction("skip", signal)} 
+                            disabled={!!actionLoading[signal.id]}
+                          >
+                            {actionLoading[signal.id] === "skip" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Don't Sell
+                          </Button>
+                        </>
+                      )}
                     </div>
                   )}
                 </CardContent>

@@ -18,6 +18,7 @@ export interface TelegramUser {
 export interface SessionUser extends TelegramUser {
   exchange?: "binance" | "btcc"
   exchangeConnected: boolean
+  riskLevel: "low" | "medium" | "high"
 }
 
 export async function verifyTelegramWebAppData(initData: string): Promise<TelegramUser | null> {

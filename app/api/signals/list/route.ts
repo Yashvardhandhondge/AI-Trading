@@ -4,7 +4,6 @@ import { getSessionUser } from "@/lib/auth"
 import { connectToDatabase, models } from "@/lib/db"
 import { EkinApiService } from "@/lib/ekin-api"
 import { logger } from "@/lib/logger"
-import { getAnyMockSignal } from "@/lib/mock-signals"
 
 export async function GET(request: NextRequest) {
   try {
@@ -112,34 +111,20 @@ export async function GET(request: NextRequest) {
     
     // If no signals from database or Ekin API, create a few mock signals
     // This ensures users always have some signals to interact with
-    const mockSignals = []
+    
     
     // Create BUY signal based on user's risk level
-    const buySignal = getAnyMockSignal(user.riskLevel as "low" | "medium" | "high")
-    if (buySignal) mockSignals.push(buySignal)
     
     // Create SELL signal for a token the user owns (if any)
     if (userHoldings.length > 0) {
       const randomToken = userHoldings[Math.floor(Math.random() * userHoldings.length)]
-      const sellSignal = getAnyMockSignal("medium", [randomToken])
-      if (sellSignal) mockSignals.push(sellSignal)
     }
     
     // Add another BUY signal with different token
     const tokens = ["ETH", "DOT", "ADA", "SOL", "AVAX"]
     const randomToken = tokens[Math.floor(Math.random() * tokens.length)]
-    const anotherBuySignal = getAnyMockSignal(user.riskLevel as "low" | "medium" | "high")
-    if (anotherBuySignal) {
-      anotherBuySignal.token = randomToken
-      anotherBuySignal.id = `mock-buy-${randomToken}-${Date.now()}`
-      mockSignals.push(anotherBuySignal)
-    }
+
     
-    logger.info(`Generated ${mockSignals.length} mock signals`, {
-      context: "SignalsList"
-    })
-    
-    return NextResponse.json({ signals: mockSignals })
   } catch (error) {
     logger.error("Error fetching signals list:", error instanceof Error ? error : new Error(String(error)), {
       context: "SignalsList",

@@ -32,6 +32,7 @@ interface SignalCardProps {
   exchangeConnected: boolean
   userOwnsToken?: boolean
   accumulatedPercentage?: number
+
 }
 
 export function SignalCard({ 
