@@ -43,11 +43,15 @@ export const useSocketStore = create<SocketState>((set) => ({
         currentState.socket.disconnect();
       }
       
+      // Track reconnection attempts locally
+      let reconnectAttempts = 0;
+      const MAX_RECONNECT_ATTEMPTS = 3;
+      
       // Create a single socket instance with proper options to prevent polling issues
       const socketInstance = io({
         path: '/api/socketio',
         transports: ['websocket'], // Force WebSocket only, no polling
-        reconnectionAttempts: 3,
+        reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
         reconnectionDelay: 5000,
         timeout: 10000,
         autoConnect: true,
@@ -60,6 +64,9 @@ export const useSocketStore = create<SocketState>((set) => ({
         // Join user-specific room
         socketInstance.emit("join-user-room", userId);
         set({ socket: socketInstance, isConnected: true });
+        
+        // Reset reconnection attempts on successful connection
+        reconnectAttempts = 0;
       });
       
       socketInstance.on("disconnect", () => {
@@ -70,8 +77,10 @@ export const useSocketStore = create<SocketState>((set) => ({
       socketInstance.on("connect_error", (err) => {
         console.log("Socket connect error:", err);
         
-        // After 3 failures, stop trying to reconnect to reduce network traffic
-        if (socketInstance.io.reconnectionAttempts === 0) {
+        reconnectAttempts++;
+        
+        // After max failures, stop trying to reconnect to reduce network traffic
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
           console.log("Max reconnection attempts reached, stopping reconnection");
           socketInstance.disconnect();
         }
