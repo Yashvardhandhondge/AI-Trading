@@ -3,7 +3,7 @@ import { getSessionUser } from "@/lib/auth"
 import { connectToDatabase, models } from "@/lib/db"
 import mongoose from "mongoose"
 
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(request: NextRequest,   { params }: { params: Promise<{ id: string }> }) {
   try {
     const sessionUser = await getSessionUser()
 
@@ -11,7 +11,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { id } = params
+    const { id } = await params
 
     if (!id) {
       return NextResponse.json({ error: "User ID is required" }, { status: 400 })
