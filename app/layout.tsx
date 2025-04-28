@@ -19,6 +19,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         {/* Add Telegram Mini App script */}
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        
+        {/* Suppress socket.io reconnection to prevent excessive polling */}
+        <script dangerouslySetInnerHTML={{
+          __html: `
+            window.addEventListener('load', () => {
+              // Override socket.io auto reconnect
+              if (window.io) {
+                const originalIO = window.io;
+                window.io = function() {
+                  const socket = originalIO.apply(this, arguments);
+                  if (socket) {
+                    socket.io.reconnectionDelay = 5000;  // 5 seconds between reconnect attempts
+                    socket.io.reconnectionAttempts = 3;  // Only try 3 times
+                    socket.io.timeout = 10000;  // 10 second timeout 
+                    
+                    const originalConnect = socket.connect;
+                    socket.connect = function() {
+                      console.log('Custom socket.io connect called');
+                      return originalConnect.apply(this, arguments);
+                    }
+                  }
+                  return socket;
+                }
+              }
+            });
+          `
+        }} />
       </head>
       <body className={inter.className}>
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
