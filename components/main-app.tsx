@@ -11,7 +11,6 @@ import { OnboardingTutorial } from "@/components/onboarding-tutorial"
 import { NotificationBanner } from "@/components/notification-banner"
 import { Bell } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { useSocketStore } from "@/lib/socket-client"
 import type { SessionUser } from "@/lib/auth"
 import { logger } from "@/lib/logger"
 import { toast } from "sonner"
@@ -24,7 +23,6 @@ export function MainApp() {
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [unreadNotifications, setUnreadNotifications] = useState(0)
   const router = useRouter()
-  const { connect, disconnect, socket } = useSocketStore()
 
   // Check for unread notifications
   const checkUnreadNotifications = async () => {
@@ -73,20 +71,6 @@ export function MainApp() {
 
     fetchUser()
 
-    // Initialize socket connection
-    const initSocket = async () => {
-      try {
-        await fetch("/api/socket")
-        logger.info("Socket API initialized", { context: "MainApp" })
-      } catch (error) {
-        logger.error("Error initializing socket API:", error instanceof Error ? error : new Error(String(error)), {
-          context: "MainApp",
-        })
-      }
-    }
-
-    initSocket()
-
     // Check for notifications
     checkUnreadNotifications()
     
@@ -95,64 +79,9 @@ export function MainApp() {
 
     // Cleanup on unmount
     return () => {
-      disconnect()
       clearInterval(notificationInterval)
     }
-  }, [router, disconnect])
-
-  // Connect to socket when user data is available
-  useEffect(() => {
-    if (user) {
-      connect(user.id.toString())
-      logger.info("Socket connected for user", { context: "MainApp", userId: user.id })
-      
-      // Setup socket event listeners for notifications
-      if (socket) {
-        socket.on("new-signal", (signal) => {
-          // Show toast notification when a new signal arrives via socket
-          toast(`New ${signal.type} signal for ${signal.token}`, {
-            action: {
-              label: "View",
-              onClick: () => {
-                setActiveTab("trades")
-              }
-            }
-          })
-          
-          // Increment unread count
-          setUnreadNotifications(prev => prev + 1)
-          
-          // Try to use Telegram's native notification if available
-          telegramService.triggerHapticFeedback('notification')
-          telegramService.showPopup(
-            `🔔 New ${signal.type} signal for ${signal.token} at ${signal.price}`,
-            [{ type: "default", text: "View Signal" }],
-            () => {
-              setActiveTab("trades")
-            }
-          )
-        })
-        
-        // Listen for notification events
-        socket.on("notification", (notification) => {
-          if (!notification.read) {
-            // Increment unread count
-            setUnreadNotifications(prev => prev + 1)
-            
-            // Show toast
-            toast(notification.message, {
-              action: {
-                label: "View",
-                onClick: () => {
-                  setActiveTab("notifications")
-                }
-              }
-            })
-          }
-        })
-      }
-    }
-  }, [user, connect, socket])
+  }, [router])
 
   // Handle onboarding completion
   const handleOnboardingComplete = () => {
@@ -164,6 +93,46 @@ export function MainApp() {
   const handleTabChange = (value: string) => {
     setActiveTab(value)
   }
+
+  // Function to simulate notification for demo purposes
+  // This replaces the socket-based notifications
+  const simulateNewNotification = () => {
+    const demoSignal = {
+      type: 'BUY',
+      token: 'BTC',
+      price: '$40,000'
+    }
+    
+    // Show toast notification
+    toast(`New ${demoSignal.type} signal for ${demoSignal.token}`, {
+      action: {
+        label: "View",
+        onClick: () => {
+          setActiveTab("trades")
+        }
+      }
+    })
+    
+    // Increment unread count
+    setUnreadNotifications(prev => prev + 1)
+    
+    // Try to use Telegram's native notification if available
+    telegramService.triggerHapticFeedback('notification')
+    telegramService.showPopup(
+      `🔔 New ${demoSignal.type} signal for ${demoSignal.token} at ${demoSignal.price}`,
+      [{ type: "default", text: "View Signal" }],
+      () => {
+        setActiveTab("trades")
+      }
+    )
+  }
+
+  // Set up periodic demo notifications if needed
+  useEffect(() => {
+    // For demo purposes, uncomment to enable simulated notifications
+    // const demoInterval = setInterval(simulateNewNotification, 60000);
+    // return () => clearInterval(demoInterval);
+  }, []);
 
   if (isLoading) {
     return (
@@ -202,7 +171,7 @@ export function MainApp() {
         
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full flex-1 flex flex-col">
           <TabsContent value="trades" className="flex-1 p-0">
-            <Dashboard user={user} socket={socket} />
+            <Dashboard user={user} />
           </TabsContent>
           
           <TabsContent value="leaders" className="flex-1 p-0">
@@ -226,7 +195,7 @@ export function MainApp() {
           </TabsContent>
           
           <TabsContent value="pnl" className="flex-1 p-0">
-            <ProfitLossView user={user} socket={socket} />
+            <ProfitLossView user={user} />
           </TabsContent>
           
           <TabsContent value="settings" className="flex-1 p-0">
