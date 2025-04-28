@@ -1,26 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 /**
- * This endpoint provides a simple health check for the socket.io server
- * and avoids the 308 redirect loop for socket.io polling
+ * This is a simple handler that informs clients that Socket.io should be accessed
+ * through pages/api/socketio.ts and not through this App Router path
  */
-export async function GET(request: NextRequest) {
+export async function GET(req: NextRequest) {
+  // Add CORS headers
   const headers = {
-    'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Cache-Control': 'no-store, max-age=0'
+    'Cache-Control': 'no-store, max-age=0',
+    'Content-Type': 'application/json'
   };
-  
-  // Return a simple success response
-  return NextResponse.json({ 
-    status: 'ok',
-    message: 'Socket API is available',
-    timestamp: new Date().toISOString()
-  }, { 
-    status: 200,
-    headers
+
+  // Redirect to the correct socket.io endpoint
+  // This helps prevent the 308 redirect loop
+  return NextResponse.redirect(new URL('/api/socketio', req.url), {
+    headers,
+    status: 307 // Temporary redirect
   });
 }
 

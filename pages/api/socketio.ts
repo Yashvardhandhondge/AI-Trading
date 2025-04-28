@@ -14,63 +14,83 @@ interface ResponseWithSocket extends NextApiResponse {
   };
 }
 
+/**
+ * This handler sets up a Socket.io server for real-time communication.
+ * It's optimized to avoid polling issues in Vercel deployments.
+ */
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
-  // Type assertion to work around the possibly null issue
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+  
+  // For polling requests, return a no-op response with long timeouts
+  // This helps prevent excessive reconnection attempts
+  if (req.url?.includes('polling')) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Content-Type', 'application/json');
+    
+    return res.status(200).json({
+      type: 'noop',
+      pingInterval: 60000,   // 60 seconds between pings
+      pingTimeout: 90000,    // 90 second timeout
+      sid: `mock-${Date.now()}` // Mock session ID
+    });
+  }
+  
+  // Cast the response to our extended type
   const response = res as ResponseWithSocket;
   
   if (!response.socket || !response.socket.server) {
     return res.status(500).json({ error: 'Socket server not available' });
   }
-
-  // Set appropriate cache headers
-  res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
-  res.setHeader('Expires', '-1');
+  
+  // Set appropriate cache headers to avoid browser caching
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
-
+  res.setHeader('Expires', '0');
+  
+  // Initialize Socket.io server if not already initialized
   if (!response.socket.server.io) {
     logger.info('Initializing Socket.io server');
     
     const io = new ServerIO(response.socket.server, {
       path: '/api/socketio',
       addTrailingSlash: false,
-      pingTimeout: 60000,
-      pingInterval: 25000, // Increase ping interval to 25 seconds
-      transports: ['websocket'], // Use only websockets to avoid polling
-      allowEIO3: true,
+      pingInterval: 60000,   // 60 seconds between pings
+      pingTimeout: 90000,    // 90 second timeout
+      connectTimeout: 10000, // 10 second connection timeout
+      transports: ['websocket'], // WebSocket only, no polling
       cors: {
         origin: '*',
-        methods: ['GET', 'POST']
+        methods: ['GET', 'POST', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization']
       }
     });
     
+    // Store the io instance on the server object
     response.socket.server.io = io;
     
+    // Set up connection handler
     io.on('connection', (socket) => {
       logger.info('Client connected:', { clientId: socket.id });
       
       socket.on('join-user-room', (userId: string) => {
         socket.join(`user-${userId}`);
-        logger.info(`User ${userId} joined their room`);
+        logger.info(`User ${userId} joined room`);
         
-        // Send confirmation to client
-        socket.emit('room-joined', `user-${userId}`);
+        // Acknowledge room join to client
+        socket.emit('room-joined', { userId, room: `user-${userId}` });
       });
       
       socket.on('disconnect', () => {
         logger.info('Client disconnected:', { clientId: socket.id });
       });
-      
-      // Keep alive ping with longer interval
-      socket.conn.on('packet', (packet) => {
-        if (packet.type === 'ping') {
-          logger.debug('Received ping', { clientId: socket.id });
-        }
-      });
     });
-  } else {
-    logger.debug('Socket.io already running');
   }
   
+  // End the response
   res.end();
 }
 

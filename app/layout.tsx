@@ -20,27 +20,50 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Add Telegram Mini App script */}
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         
-        {/* Suppress socket.io reconnection to prevent excessive polling */}
+        {/* Socket.io connection management - prevent excessive reconnects */}
         <script dangerouslySetInnerHTML={{
           __html: `
             window.addEventListener('load', () => {
-              // Override socket.io auto reconnect
+              // Override socket.io to limit reconnection attempts
               if (window.io) {
                 const originalIO = window.io;
                 window.io = function() {
                   const socket = originalIO.apply(this, arguments);
                   if (socket) {
-                    socket.io.reconnectionDelay = 5000;  // 5 seconds between reconnect attempts
-                    socket.io.reconnectionAttempts = 3;  // Only try 3 times
-                    socket.io.timeout = 10000;  // 10 second timeout 
+                    // Configure connection parameters
+                    socket.io.reconnectionDelay = 5000;         // 5 seconds between reconnect attempts
+                    socket.io.reconnectionDelayMax = 30000;     // Max 30 second delay
+                    socket.io.reconnectionAttempts = 3;         // Only try 3 times
+                    socket.io.timeout = 10000;                  // 10 second timeout
+                    socket.io.autoConnect = false;              // Don't connect until explicitly told
                     
-                    const originalConnect = socket.connect;
-                    socket.connect = function() {
-                      console.log('Custom socket.io connect called');
-                      return originalConnect.apply(this, arguments);
+                    // Cache control for polling transport to avoid redirect issues
+                    if (socket.io.opts && socket.io.opts.transports) {
+                      socket.io.opts.transports = ['websocket']; // Force WebSocket only
                     }
+                    
+                    // Monitor reconnect failures
+                    let reconnectAttempts = 0;
+                    socket.io.on('reconnect_attempt', () => {
+                      reconnectAttempts++;
+                      console.log('Socket.io reconnect attempt:', reconnectAttempts);
+                      if (reconnectAttempts >= 3) {
+                        console.log('Max reconnect attempts reached, disabling reconnect');
+                        socket.io.reconnection(false); // Disable further reconnection attempts
+                      }
+                    });
+                    
+                    // Monitor errors
+                    socket.io.on('error', (err) => {
+                      console.error('Socket.io error:', err);
+                    });
                   }
                   return socket;
+                };
+                
+                // Patch io.connect and io.manager as well
+                if (window.io.connect) {
+                  window.io.connect = window.io;
                 }
               }
             });
