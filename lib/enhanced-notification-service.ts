@@ -16,11 +16,11 @@ interface NotificationOptions {
 export class EnhancedNotificationService {
   private static instance: EnhancedNotificationService;
   private telegramBotToken: string;
-  private socketServerUrl: string;
+  
   
   private constructor() {
     this.telegramBotToken = process.env.TELEGRAM_BOT_TOKEN || "";
-    this.socketServerUrl = process.env.SOCKET_SERVER_URL || "https://api.cycletrader.app";
+    // this.socketServerUrl = process.env.SOCKET_SERVER_URL || "https://api.cycletrader.app";
     
     if (!this.telegramBotToken) {
       logger.warn("Telegram bot token not found in environment variables");
@@ -43,13 +43,12 @@ export class EnhancedNotificationService {
       const results = await Promise.allSettled([
         this.storeNotificationInDatabase(options),
         this.sendTelegramNotification(options),
-        this.sendSocketNotification(options),
         this.sendPushNotification(options)
       ]);
       
       // Log results of each channel attempt
       results.forEach((result, index) => {
-        const channel = ["database", "telegram", "socket", "push"][index];
+        const channel = ["database", "telegram", "push"][index];
         if (result.status === "fulfilled") {
           logger.info(`Successfully sent notification via ${channel} channel`, {
             context: "Notifications",
@@ -178,44 +177,7 @@ export class EnhancedNotificationService {
   /**
    * Send notification via WebSocket for real-time in-app notifications
    */
-  private async sendSocketNotification(options: NotificationOptions): Promise<boolean> {
-    try {
-      // Use socket.io server to emit notification event
-      const { getIOInstance } = await import('@/lib/socket');
-      const io = getIOInstance();
-      
-      if (!io) {
-        throw new Error("Socket.io instance not available");
-      }
-      
-      // Get Telegram ID
-      let telegramId = options.userId;
-      
-      if (typeof options.userId !== 'number' && options.userId.includes('-')) {
-        // This is likely an internal user ID, need to get the Telegram ID
-        const user = await models.User.findById(options.userId);
-        if (!user) {
-          throw new Error(`User with ID ${options.userId} not found`);
-        }
-        telegramId = user.telegramId;
-      }
-      
-      // Emit to user-specific room
-      io.to(`user-${telegramId}`).emit("notification", {
-        id: Date.now().toString(),
-        type: options.type,
-        message: options.message,
-        priority: options.priority || "medium",
-        data: options.data || {},
-        createdAt: new Date().toISOString()
-      });
-      
-      return true;
-    } catch (error) {
-      logger.error(`Error sending socket notification: ${error instanceof Error ? error.message : "Unknown error"}`);
-      throw error;
-    }
-  }
+
   
   /**
    * Send push notification for mobile devices
