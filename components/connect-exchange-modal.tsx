@@ -217,128 +217,50 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
           </div>
         ) : (
           <>
-            <div className="flex flex-col space-y-4 py-2">
-              <div className="rounded-md bg-blue-50 p-3 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 flex items-start">
-                <Shield className="h-5 w-5 mr-2 mt-0.5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-                <p className="text-sm">
-                  Your exchange API keys are encrypted and stored securely on the proxy server.
-                  Only keys with <strong>trading permissions</strong> will work with this app.
+           <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-200 dark:border-blue-800">
+                <p className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-2">
+                  Important: Whitelist BOTH these IP addresses
+                </p>
+                
+                <div className="space-y-3">
+                  <div className="flex items-start">
+                    <div className="bg-blue-100 dark:bg-blue-800 rounded-full p-1 mr-2 text-blue-600 dark:text-blue-300">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" />
+                        <path d="M4 6v12c0 1.1.9 2 2 2h14v-4" />
+                        <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-blue-700 dark:text-blue-400">1. Your current IP address:</p>
+                      <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200 text-sm">
+                        {isLoadingIp ? "Loading..." : userIp}
+                      </code>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start">
+                    <div className="bg-blue-100 dark:bg-blue-800 rounded-full p-1 mr-2 text-blue-600 dark:text-blue-300">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                        <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                        <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-blue-700 dark:text-blue-400">2. Our server IP address:</p>
+                      <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200 text-sm">
+                        13.60.210.111
+                      </code>
+                    </div>
+                  </div>
+                </div>
+                
+                <p className="text-xs mt-2 text-blue-600 dark:text-blue-400">
+                  Both IP addresses must be added to your exchange API whitelist settings
                 </p>
               </div>
-
-              {error && (
-                <Alert variant="destructive" className="border-red-500 bg-red-50 dark:bg-red-900/20">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle className="text-red-800 dark:text-red-300">Connection Error</AlertTitle>
-                  <AlertDescription className="text-red-700 dark:text-red-400">
-                    {error}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              <form onSubmit={handleSubmit}>
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Select Exchange</Label>
-                    <RadioGroup
-                      value={exchange}
-                      onValueChange={(value) => setExchange(value as "binance" | "btcc")}
-                      className="flex flex-col space-y-1"
-                    >
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="binance" id="binance" />
-                        <Label htmlFor="binance">Binance (Spot)</Label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="btcc" id="btcc" />
-                        <Label htmlFor="btcc">BTCC (Futures)</Label>
-                      </div>
-                    </RadioGroup>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="apiKey">API Key</Label>
-                    <Input
-                      id="apiKey"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      required
-                      disabled={!proxyServerAvailable}
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="apiSecret">API Secret</Label>
-                    <Input
-                      id="apiSecret"
-                      type="password"
-                      value={apiSecret}
-                      onChange={(e) => setApiSecret(e.target.value)}
-                      required
-                      disabled={!proxyServerAvailable}
-                    />
-                  </div>
-                </div>
-              </form>
-
-              <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-900/20 rounded-md text-sm">
-                <h4 className="font-semibold mb-3">Setup instructions for {exchange === "binance" ? "Binance" : "BTCC"}:</h4>
-                <div className="rounded-md bg-amber-50 dark:bg-amber-900/20 p-3 mb-3">
-                  <div className="flex items-start">
-                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 mr-2" />
-                    <div className="text-sm text-amber-800 dark:text-amber-300">
-                      <strong>Important:</strong> When creating API keys, you MUST enable trading permissions.
-                    </div>
-                  </div>
-                </div>
-                
-                <ol className="list-decimal list-inside space-y-2 pl-1">
-                  <li>Log in to your {exchange === "binance" ? "Binance" : "BTCC"} account</li>
-                  <li>Go to <strong>API Management</strong> in your account settings</li>
-                  <li>Create a new API key</li>
-                  <li>Enable the <strong>{exchange === "binance" ? "Enable Spot & Margin Trading" : "Trading"}</strong> permission</li>
-                  <li>Copy your API key and secret</li>
-                  <li>Enter them in the form above</li>
-                </ol>
-                
-                <div className="mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-md">
-                  <div>
-                    <p className="font-medium">Important: Whitelist BOTH these IP addresses:</p>
-                    <div className="mt-2 space-y-2">
-                      <div>
-                        <p className="text-sm font-medium">1. Your current IP address:</p>
-                        <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200">
-                          {isLoadingIp ? "Loading..." : userIp}
-                        </code>
-                      </div>
-                      
-                      <div>
-                        <p className="text-sm font-medium">2. Our server IP address:</p>
-                        <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200">
-                          13.60.210.111
-                        </code>
-                      </div>
-                    </div>
-                    <p className="text-xs mt-2">Add both IP addresses to your exchange API whitelist for the application to work correctly</p>
-                  </div>
-                </div>
-                
-                <div className="mt-4 space-y-2">
-                  <div className="flex items-center">
-                    <div className="h-4 w-4 rounded-full bg-green-500 mr-2 flex-shrink-0"></div>
-                    <span>Execute trades directly from signals</span>
-                  </div>
-                  <div className="flex items-center">
-                    <div className="h-4 w-4 rounded-full bg-green-500 mr-2 flex-shrink-0"></div>
-                    <span>Track your portfolio performance automatically</span>
-                  </div>
-                  <div className="flex items-center">
-                    <div className="h-4 w-4 rounded-full bg-green-500 mr-2 flex-shrink-0"></div>
-                    <span>Receive SELL signals for tokens you own</span>
-                  </div>
-                </div>
-              </div>
-            </div>
 
             <DialogFooter className="flex flex-col sm:flex-row gap-2 mt-4">
               <Button variant="outline" onClick={() => onOpenChange(false)}>

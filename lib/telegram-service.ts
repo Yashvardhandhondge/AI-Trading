@@ -166,28 +166,16 @@ export class TelegramService {
           return
         }
         
-        // Display a popup asking for notification permission
-        this.showPopup(
-          "Would you like to receive notifications for new trading signals?",
-          [
-            { type: "default", text: "Yes" },
-            { type: "cancel", text: "Not now" }
-          ],
-          (buttonId: number) => {
-            if (buttonId === 0) {
-              // User agreed to notifications
-              // Store preference
-              localStorage.setItem("notifications_enabled", "true")
-              resolve(true)
-            } else {
-              // User declined notifications
-              localStorage.setItem("notifications_enabled", "false")
-              resolve(false)
-            }
-          }
-        )
+        // Automatically enable notifications by default without showing popup
+        localStorage.setItem("notifications_enabled", "true")
+        resolve(true)
+        
+        // Log that notifications have been enabled
+        logger.info("Notifications automatically enabled by default", {
+          context: "TelegramService"
+        })
       } catch (error) {
-        logger.error(`Error requesting notification permission: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        logger.error(`Error setting notification permission: ${error instanceof Error ? error.message : 'Unknown error'}`)
         resolve(false)
       }
     })

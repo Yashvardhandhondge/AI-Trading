@@ -107,18 +107,18 @@ export function MarketOverview({ exchange }: MarketOverviewProps) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Market Overview</CardTitle>
-        <CardDescription>Risk analysis from Ekin API for {exchange.toUpperCase()}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
-          <TabsList className="grid w-full grid-cols-4 mb-4">
-            <TabsTrigger value="all">All</TabsTrigger>
-            <TabsTrigger value="low">Low Risk</TabsTrigger>
-            <TabsTrigger value="medium">Medium Risk</TabsTrigger>
-            <TabsTrigger value="high">High Risk</TabsTrigger>
-          </TabsList>
+    <CardHeader className="pb-2">
+      <CardTitle className="text-lg">Market Overview</CardTitle>
+      <CardDescription className="text-xs">Risk analysis from Ekin API for {exchange.toUpperCase()}</CardDescription>
+    </CardHeader>
+    <CardContent className="p-3">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
+        <TabsList className="grid w-full grid-cols-4 mb-3 h-8">
+          <TabsTrigger value="all" className="text-xs px-1">All</TabsTrigger>
+          <TabsTrigger value="low" className="text-xs px-1">Low</TabsTrigger>
+          <TabsTrigger value="medium" className="text-xs px-1">Medium</TabsTrigger>
+          <TabsTrigger value="high" className="text-xs px-1">High</TabsTrigger>
+        </TabsList>
 
           <TabsContent value={activeTab} className="mt-0">
             <div className="max-h-[400px] overflow-y-auto">

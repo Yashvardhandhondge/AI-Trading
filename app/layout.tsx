@@ -8,10 +8,10 @@ import { ToasterProvider } from "@/components/toaster-provider"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Cycle Trader",
+  title: "AiCryptoTrader",
   description: "Cryptocurrency trading with real-time signals",
-  viewport: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no",
-}
+  viewport: "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover",
+}s
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -5,14 +5,12 @@ import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dashboard } from "@/components/dashboard"
 import { Portfolio } from "@/components/portfolio"
-import { Leaderboard } from "@/components/leaderboard"
+import { ProfitLossView } from "./ProfitLossView"
 import { Settings } from "@/components/settings"
-import { ExchangeSetup } from "@/components/exchange-setup"
 import { OnboardingTutorial } from "@/components/onboarding-tutorial"
 import { NotificationBanner } from "@/components/notification-banner"
-import { NotificationsPage } from "@/components/notifications-page"
-import { Badge } from "@/components/ui/badge"
 import { Bell } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { useSocketStore } from "@/lib/socket-client"
 import type { SessionUser } from "@/lib/auth"
 import { logger } from "@/lib/logger"
@@ -21,7 +19,7 @@ import { telegramService } from "@/lib/telegram-service"
 
 export function MainApp() {
   const [user, setUser] = useState<SessionUser | null>(null)
-  const [activeTab, setActiveTab] = useState("dashboard")
+  const [activeTab, setActiveTab] = useState("trades")
   const [isLoading, setIsLoading] = useState(true)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [unreadNotifications, setUnreadNotifications] = useState(0)
@@ -116,7 +114,7 @@ export function MainApp() {
             action: {
               label: "View",
               onClick: () => {
-                setActiveTab("dashboard")
+                setActiveTab("trades")
               }
             }
           })
@@ -130,7 +128,7 @@ export function MainApp() {
             `🔔 New ${signal.type} signal for ${signal.token} at ${signal.price}`,
             [{ type: "default", text: "View Signal" }],
             () => {
-              setActiveTab("dashboard")
+              setActiveTab("trades")
             }
           )
         })
@@ -165,11 +163,6 @@ export function MainApp() {
   // Handle tab change
   const handleTabChange = (value: string) => {
     setActiveTab(value)
-    
-    // If switching to notifications tab, reset the unread count
-    if (value === "notifications") {
-      setUnreadNotifications(0)
-    }
   }
 
   if (isLoading) {
@@ -187,47 +180,78 @@ export function MainApp() {
     return null // Or a more detailed error state
   }
 
-  // Show the main app UI regardless of exchange connection status
+  // Show the main app UI
   return (
     <>
-      <div className="telegram-app">
-        {/* Add NotificationBanner at the top level so it can appear regardless of tab */}
+      <div className="telegram-app w-full min-h-screen">
+        {/* Add header with app name */}
+        <div className="bg-background border-b py-2 px-4 flex justify-between items-center">
+          <h1 className="text-lg font-bold">Cycles.fun</h1>
+          {!user.exchangeConnected && (
+            <button 
+              onClick={() => setActiveTab("settings")}
+              className="text-sm text-primary"
+            >
+              Connect Wallet
+            </button>
+          )}
+        </div>
+        
+        {/* Add NotificationBanner at the top level */}
         <NotificationBanner userId={user.id} />
         
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full flex-1 flex flex-col">
-          <TabsContent value="dashboard" className="flex-1 p-0">
+          <TabsContent value="trades" className="flex-1 p-0">
             <Dashboard user={user} socket={socket} />
           </TabsContent>
-          <TabsContent value="portfolio" className="flex-1 p-0">
-            <Portfolio user={user} socket={socket} />
+          
+          <TabsContent value="leaders" className="flex-1 p-0">
+            <div className="container mx-auto p-4">
+              <h2 className="text-xl font-bold mb-4">Leaderboard</h2>
+              <div className="divide-y border rounded-md">
+                {Array.from({length: 3}).map((_, i) => (
+                  <div key={i} className="flex items-center justify-between p-4">
+                    <div className="flex items-center">
+                      <div className="w-10 h-10 rounded-full bg-gray-200 mr-3"></div>
+                      <div>
+                        <p className="font-medium">Moritz</p>
+                        <p className="text-sm text-muted-foreground">2,574 Trades</p>
+                      </div>
+                    </div>
+                    <div className="text-green-500 font-bold">+78%</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </TabsContent>
-          <TabsContent value="notifications" className="flex-1 p-0">
-            <NotificationsPage userId={user.id} />
+          
+          <TabsContent value="pnl" className="flex-1 p-0">
+            <ProfitLossView user={user} socket={socket} />
           </TabsContent>
-          <TabsContent value="leaderboard" className="flex-1 p-0">
-            <Leaderboard />
-          </TabsContent>
+          
           <TabsContent value="settings" className="flex-1 p-0">
             {!user.exchangeConnected && activeTab === "settings" ? (
-              <ExchangeSetup user={user} onComplete={() => router.refresh()} />
+              <div className="container mx-auto p-4">
+                <h2 className="text-xl font-bold mb-4">Connect Your Exchange</h2>
+                <Settings user={user} />
+              </div>
             ) : (
               <Settings user={user} />
             )}
           </TabsContent>
 
-          <TabsList className="grid grid-cols-5 h-16 fixed bottom-0 left-0 right-0 rounded-none border-t">
-            <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-            <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
-            <TabsTrigger value="notifications" className="relative">
-              Notifications
+          <TabsList className="grid grid-cols-4 h-16 fixed bottom-0 left-0 right-0 rounded-none border-t z-50 bg-background">
+            <TabsTrigger value="trades">Trades</TabsTrigger>
+            <TabsTrigger value="leaders">Leaders</TabsTrigger>
+            <TabsTrigger value="pnl">PnL</TabsTrigger>
+            <TabsTrigger value="settings" className="relative">
+              Settings
               {unreadNotifications > 0 && (
                 <Badge className="absolute -top-2 -right-2 bg-red-500 text-white h-5 min-w-5 flex items-center justify-center p-0 text-xs">
                   {unreadNotifications > 99 ? '99+' : unreadNotifications}
                 </Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
