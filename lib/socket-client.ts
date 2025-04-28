@@ -44,7 +44,6 @@ export const useSocketStore = create<SocketState>((set) => ({
       }
       
       // Create a single socket instance with proper options to prevent polling issues
-      // Note: Using websocket transport only to avoid polling redirection issues
       const socketInstance = io({
         path: '/api/socketio',
         transports: ['websocket'], // Force WebSocket only, no polling
