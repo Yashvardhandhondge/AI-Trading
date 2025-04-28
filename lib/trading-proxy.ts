@@ -76,7 +76,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: `HTTP error: ${response.status}` }));
         const errorMessage = errorData.error || `Registration failed with status ${response.status}`;
-        logger.error(`API key registration failed: ${errorMessage}`, {
+        logger.error(`API key registration failed: ${errorMessage}`, undefined, {
           context: 'TradingProxy',
           userId
         });
@@ -91,7 +91,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
       
       return true;
     } catch (error) {
-      logger.error(`API key registration error: ${error instanceof Error ? error.message : 'Unknown error'}`, {
+      logger.error(`API key registration error: ${error instanceof Error ? error.message : 'Unknown error'}`, undefined, {
         context: 'TradingProxy',
         userId
       });
@@ -206,7 +206,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
       const response = await this.executeProxyRequest(userId, '/api/v3/ticker/price', 'GET', { symbol });
       return Number.parseFloat(response.price);
     } catch (error) {
-      logger.error(`Error getting price for ${symbol}: ${error instanceof Error ? error : 'Unknown error'}`);
+      logger.error(`Error getting price for ${symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     }
   }
@@ -252,7 +252,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
         timestamp: response.transactTime,
       };
     } catch (error) {
-      logger.error(`Error executing trade: ${error instanceof Error ? error : 'Unknown error'}`);
+      logger.error(`Error executing trade: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     }
   }
@@ -293,7 +293,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
               pnlPercentage,
             };
           } catch (error) {
-            logger.error(`Error processing holding for ${balance.asset}: ${error instanceof Error ? error : 'Unknown error'}`);
+            logger.error(`Error processing holding for ${balance.asset}: ${error instanceof Error ? error.message : 'Unknown error'}`);
             
             // Return a fallback entry with zero values for this asset
             return {
@@ -325,7 +325,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
         holdings,
       };
     } catch (error) {
-      logger.error(`Error fetching portfolio: ${error instanceof Error ? error : 'Unknown error'}`);
+      logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : 'Unknown error'}`);
 
       // Return mock data for development or when the proxy fails
       if (process.env.NODE_ENV === 'development' || process.env.USE_MOCK_DATA === 'true') {
@@ -348,7 +348,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
 
       return this.executeProxyRequest(userId, '/api/v3/openOrders', 'GET', params);
     } catch (error) {
-      logger.error(`Error getting open orders: ${error instanceof Error ? error : 'Unknown error'}`);
+      logger.error(`Error getting open orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     }
   }
@@ -363,7 +363,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
         orderId
       });
     } catch (error) {
-      logger.error(`Error canceling order: ${error instanceof Error ? error : 'Unknown error'}`);
+      logger.error(`Error canceling order: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     }
   }
