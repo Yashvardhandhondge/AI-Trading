@@ -1,4 +1,5 @@
-// lib/signal-service.ts - UPDATED
+// Updated SignalService to better handle signal data with proper TypeScript typing
+// lib/signal-service.ts
 import { logger } from "@/lib/logger";
 import { EkinApiService } from "@/lib/ekin-api";
 
@@ -19,6 +20,7 @@ export interface Signal {
   warning_count?: number;
   processed?: boolean;
   action?: string;
+  isOldSignal?: boolean;
 }
 
 export interface SignalQueryOptions {
@@ -51,9 +53,9 @@ class SignalService {
    * Generate a temporary ID for signals that don't have one
    * This ensures all signals have an ID before being used in the UI
    */
-  private generateTemporaryId(signal: any): string {
+  private generateTemporaryId(signal: Partial<Signal>): string {
     // Create a deterministic ID based on signal properties
-    const idBase = `${signal.type}_${signal.token}_${signal.price}`;
+    const idBase = `${signal.type || "UNKNOWN"}_${signal.token || "UNKNOWN"}_${signal.price || 0}`;
     return `temp_${idBase}_${Date.now()}`;
   }
 
@@ -65,8 +67,8 @@ class SignalService {
       // Try database API first
       const signals = await this.fetchSignalsFromAPI(options);
       
-      // Ensure all signals have an ID
-      const validatedSignals = this.ensureSignalIds(signals);
+      // Ensure all signals have an ID and created/expiry times are properly formatted
+      const validatedSignals = this.processSignals(signals);
       
       // If we got signals from the API, return them
       if (validatedSignals && validatedSignals.length > 0) {
@@ -80,8 +82,8 @@ class SignalService {
         const ekinSignals = await this.fetchSignalsFromEkin(options);
         
         if (ekinSignals && ekinSignals.length > 0) {
-          // Ensure all signals from Ekin have IDs
-          const validatedEkinSignals = this.ensureSignalIds(ekinSignals);
+          // Process signals from Ekin API
+          const validatedEkinSignals = this.processSignals(ekinSignals);
           this.cachedSignals = validatedEkinSignals;
           this.lastEkinUpdate = Date.now();
           
@@ -92,35 +94,54 @@ class SignalService {
         }
       }
       
-      // If we still don't have signals, return cached signals (ensuring they have IDs) or empty array
-      return this.cachedSignals.length > 0 ? this.ensureSignalIds(this.cachedSignals) : [];
+      // If we still don't have signals, return cached signals or empty array
+      return this.cachedSignals.length > 0 ? this.processSignals(this.cachedSignals) : [];
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       logger.error(`Error fetching signals: ${errorMessage}`);
       
-      // Return cached signals as a fallback (ensuring they have IDs)
-      return this.cachedSignals.length > 0 ? this.ensureSignalIds(this.cachedSignals) : [];
+      // Return cached signals as a fallback
+      return this.cachedSignals.length > 0 ? this.processSignals(this.cachedSignals) : [];
     }
   }
   
   /**
-   * Ensure all signals have a valid ID
+   * Process signals to ensure they have IDs and proper timestamps
    */
-  private ensureSignalIds(signals: any[]): Signal[] {
+  private processSignals(signals: any[]): Signal[] {
     if (!signals || !Array.isArray(signals)) return [];
     
-    return signals.map(signal => {
-      if (!signal.id) {
-        // Generate a temporary ID if the signal doesn't have one
-        const tempId = this.generateTemporaryId(signal);
-        logger.debug(`Generated temporary ID for signal: ${tempId}`, {
-          context: "SignalService",
-          data: { token: signal.token, type: signal.type }
-        });
-        return { ...signal, id: tempId };
+    return signals.map((signal: any): Signal => {
+      // Ensure every signal has an ID
+      const id = signal.id || this.generateTemporaryId(signal);
+      
+      // Ensure createdAt has a valid date
+      let createdAt = signal.createdAt;
+      if (!createdAt || isNaN(new Date(createdAt).getTime())) {
+        createdAt = new Date().toISOString();
       }
-      return signal;
+      
+      // Ensure expiresAt has a valid date
+      let expiresAt = signal.expiresAt;
+      if (!expiresAt || isNaN(new Date(expiresAt).getTime())) {
+        // Set expiration to 10 minutes after creation
+        const expiry = new Date(new Date(createdAt).getTime() + 10 * 60 * 1000);
+        expiresAt = expiry.toISOString();
+      }
+      
+      // Calculate if this is an old signal (more than 10 minutes since creation)
+      const isOldSignal = new Date().getTime() - new Date(createdAt).getTime() > 10 * 60 * 1000;
+      
+      return {
+        ...signal,
+        id,
+        createdAt,
+        expiresAt,
+        isOldSignal,
+        type: signal.type as "BUY" | "SELL",
+        riskLevel: signal.riskLevel as "low" | "medium" | "high"
+      };
     });
   }
   
@@ -147,6 +168,9 @@ class SignalService {
       if (options.limit) {
         queryParams.append("limit", options.limit.toString());
       }
+      
+      // Add timestamp to avoid caching
+      queryParams.append("_t", Date.now().toString());
       
       const queryString = queryParams.toString() ? `?${queryParams.toString()}` : "";
       
@@ -193,20 +217,17 @@ class SignalService {
         return [];
       }
       
-      // Convert Ekin signals to our format and ensure they have IDs
-      const signals: Signal[] = ekinSignals.map(ekinSignal => {
+      // Convert Ekin signals to our format
+      const signals: Signal[] = ekinSignals.map((ekinSignal: any): Signal => {
         const appSignal = EkinApiService.convertToAppSignal(ekinSignal);
         
-        // Generate a temporary ID for the signal
-        const tempId = this.generateTemporaryId({
-          type: appSignal.type,
-          token: appSignal.token,
-          price: appSignal.price
-        });
-        
         return {
-          id: tempId, // Add the temporary ID
-          type: appSignal.type,
+          id: this.generateTemporaryId({
+            type: appSignal.type,
+            token: appSignal.token,
+            price: appSignal.price
+          }),
+          type: appSignal.type as "BUY" | "SELL",
           token: appSignal.token,
           price: appSignal.price,
           riskLevel: appSignal.riskLevel as "low" | "medium" | "high",
@@ -272,7 +293,7 @@ class SignalService {
         });
       }
       
-      logger.info(`Stored ${signals.length} signals in database`);
+      logger.info(`Attempted to store ${signals.length} signals in database`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       logger.error(`Error storing signals in database: ${errorMessage}`);
@@ -281,12 +302,12 @@ class SignalService {
   }
   
   /**
-   * Check if there are new signals available
+   * Check if there are new signals available since the last check time
    */
   public async checkForNewSignals(lastCheckTime: number): Promise<{hasNew: boolean, newSignals: Signal[]}> {
     try {
       // Get signals from the last minute
-      const response = await fetch(`/api/signals/latest?since=${lastCheckTime}`);
+      const response = await fetch(`/api/signals/latest?since=${lastCheckTime}&_t=${Date.now()}`);
       
       if (!response.ok) {
         return { hasNew: false, newSignals: [] };
@@ -295,8 +316,8 @@ class SignalService {
       const data = await response.json();
       
       if (data.signals && Array.isArray(data.signals) && data.signals.length > 0) {
-        // Ensure all new signals have IDs
-        const validatedSignals = this.ensureSignalIds(data.signals);
+        // Process new signals
+        const validatedSignals = this.processSignals(data.signals);
         logger.info(`Found ${validatedSignals.length} new signals`);
         return { hasNew: true, newSignals: validatedSignals };
       }

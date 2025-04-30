@@ -1,10 +1,11 @@
+// app/api/cron/sync-ekin-signals/route.ts - Fixed to filter invalid signals
 import { NextResponse } from "next/server"
 import { connectToDatabase, models } from "@/lib/db"
 import { EkinApiService } from "@/lib/ekin-api"
 import { logger } from "@/lib/logger"
 
 // This endpoint will be called by a cron job every hour
-export async function POST() {
+export async function POST(request: Request) {
   try {
     logger.info("Starting Ekin signals sync", { context: "CronJob" })
 
@@ -17,129 +18,179 @@ export async function POST() {
     logger.info(`Fetched ${ekinSignals.length} signals from Ekin API`, { context: "CronJob" })
 
     // Convert to app signal format and store in database
-    const results = []
+    const results: Array<{
+      token: string;
+      type: string;
+      created: boolean;
+      id?: string;
+      reason?: string;
+      price?: number;
+    }> = [];
 
     for (const ekinSignal of ekinSignals) {
-      const appSignal = EkinApiService.convertToAppSignal(ekinSignal)
+      try {
+        const appSignal = EkinApiService.convertToAppSignal(ekinSignal)
 
-      // Check if signal already exists
-      const existingSignal = await models.Signal.findOne({
-        token: appSignal.token,
-        price: appSignal.price,
-        expiresAt: { $gt: new Date() },
-      })
+        // Skip signals with invalid prices (0 or negative)
+        if (!appSignal.price || appSignal.price <= 0) {
+          logger.warn(`Skipping signal with invalid price: ${appSignal.token} (${appSignal.price})`, {
+            context: "CronJob"
+          });
+          
+          results.push({
+            token: appSignal.token,
+            type: appSignal.type,
+            created: false,
+            reason: "Invalid price",
+            price: appSignal.price
+          });
+          
+          continue;
+        }
 
-      if (!existingSignal) {
-        // Create new signal
-        const signal = await models.Signal.create(appSignal)
-        results.push({
-          token: signal.token,
-          type: signal.type,
-          created: true,
-          id: signal._id.toString(),
+        // Check if signal already exists
+        const existingSignal = await models.Signal.findOne({
+          token: appSignal.token,
+          type: appSignal.type,
+          price: appSignal.price,
+          expiresAt: { $gt: new Date() },
         })
 
-        // For BUY signals, notify users based on risk level
-        if (appSignal.type === "BUY") {
-          // Create notifications for eligible users based on risk level
-          const eligibleUsers = await models.User.find({
-            riskLevel: appSignal.riskLevel,
+        if (!existingSignal) {
+          // Create new signal
+          const signal = await models.Signal.create(appSignal)
+          results.push({
+            token: signal.token,
+            type: signal.type,
+            created: true,
+            id: signal._id.toString(),
+            price: signal.price
           })
 
-          logger.info(`Found ${eligibleUsers.length} users matching risk level ${appSignal.riskLevel} for BUY signal`)
+          // For BUY signals, notify users based on risk level
+          if (appSignal.type === "BUY") {
+            // Create notifications for eligible users based on risk level
+            const eligibleUsers = await models.User.find({
+              riskLevel: appSignal.riskLevel,
+            })
 
-          for (const user of eligibleUsers) {
-            // Check if user has already received a signal for this token in the last 24 hours
-            const hasRecentSignal = user.lastSignalTokens.some(
-              (item: any) =>
-                item.token === appSignal.token &&
-                new Date().getTime() - new Date(item.timestamp).getTime() < 24 * 60 * 60 * 1000,
-            )
+            logger.info(`Found ${eligibleUsers.length} users matching risk level ${appSignal.riskLevel} for BUY signal`)
 
-            if (!hasRecentSignal) {
-              await models.Notification.create({
-                userId: user._id,
-                type: "signal",
-                message: `New ${appSignal.type} signal for ${appSignal.token} at ${appSignal.price}`,
-                relatedId: signal._id,
-                createdAt: new Date(),
-              })
-
-              logger.info(`Created BUY notification for user ${user._id} for token ${appSignal.token}`, {
-                context: "CronJob"
-              })
-            } else {
-              logger.info(`Skipped BUY notification for user ${user._id} - already received signal for ${appSignal.token} in last 24h`, {
-                context: "CronJob"
-              })
-            }
-          }
-        } 
-        // For SELL signals, only notify users who have this token in their portfolio
-        else if (appSignal.type === "SELL") {
-          // Only find users who have exchange connected - they're the only ones who can own tokens
-          const usersWithConnectedExchange = await models.User.find({ exchangeConnected: true })
-          
-          logger.info(`Processing SELL signal for ${appSignal.token} - checking ${usersWithConnectedExchange.length} users with connected exchanges`)
-
-          let notifiedUsers = 0;
-          for (const user of usersWithConnectedExchange) {
-            // Check if user has the token in their portfolio
-            const portfolio = await models.Portfolio.findOne({ userId: user._id })
-
-            if (portfolio && portfolio.holdings) {
-              // Only consider non-zero holdings
-              const hasToken = portfolio.holdings.some((h: any) => 
-                h.token === appSignal.token && h.amount > 0
+            for (const user of eligibleUsers) {
+              // Check if user has already received a signal for this token in the last 24 hours
+              const hasRecentSignal = user.lastSignalTokens && user.lastSignalTokens.some(
+                (item: any) =>
+                  item.token === appSignal.token &&
+                  new Date().getTime() - new Date(item.timestamp).getTime() < 24 * 60 * 60 * 1000,
               )
 
-              if (hasToken) {
-                // Check if user has already received a signal for this token in the last 24 hours
-                const hasRecentSignal = user.lastSignalTokens.some(
-                  (item: any) =>
-                    item.token === appSignal.token &&
-                    new Date().getTime() - new Date(item.timestamp).getTime() < 24 * 60 * 60 * 1000,
+              if (!hasRecentSignal) {
+                await models.Notification.create({
+                  userId: user._id,
+                  type: "signal",
+                  message: `New ${appSignal.type} signal for ${appSignal.token} at ${appSignal.price}`,
+                  relatedId: signal._id,
+                  createdAt: new Date(),
+                })
+
+                // Add to lastSignalTokens
+                if (!user.lastSignalTokens) {
+                  user.lastSignalTokens = [];
+                }
+                
+                user.lastSignalTokens.push({
+                  token: appSignal.token,
+                  timestamp: new Date()
+                });
+                await user.save();
+
+                logger.info(`Created BUY notification for user ${user._id} for token ${appSignal.token}`, {
+                  context: "CronJob"
+                })
+              } else {
+                logger.info(`Skipped BUY notification for user ${user._id} - already received signal for ${appSignal.token} in last 24h`, {
+                  context: "CronJob"
+                })
+              }
+            }
+          } 
+          // For SELL signals, only notify users who have this token in their portfolio
+          else if (appSignal.type === "SELL") {
+            // Only find users who have exchange connected - they're the only ones who can own tokens
+            const usersWithConnectedExchange = await models.User.find({ exchangeConnected: true })
+            
+            logger.info(`Processing SELL signal for ${appSignal.token} - checking ${usersWithConnectedExchange.length} users with connected exchanges`)
+
+            let notifiedUsers = 0;
+            for (const user of usersWithConnectedExchange) {
+              // Check if user has the token in their portfolio
+              const portfolio = await models.Portfolio.findOne({ userId: user._id })
+
+              if (portfolio && portfolio.holdings) {
+                // Only consider non-zero holdings
+                const hasToken = portfolio.holdings.some((h: any) => 
+                  h.token === appSignal.token && h.amount > 0
                 )
 
-                if (!hasRecentSignal) {
-                  await models.Notification.create({
-                    userId: user._id,
-                    type: "signal",
-                    message: `New ${appSignal.type} signal for ${appSignal.token} at ${appSignal.price}`,
-                    relatedId: signal._id,
-                    createdAt: new Date(),
-                  })
-                  
-                  notifiedUsers++;
-                  logger.info(`Created SELL notification for user ${user._id} who owns ${appSignal.token}`, {
-                    context: "CronJob"
-                  })
+                if (hasToken) {
+                  // Check if user has already received a signal for this token in the last 24 hours
+                  const hasRecentSignal = user.lastSignalTokens && user.lastSignalTokens.some(
+                    (item: any) =>
+                      item.token === appSignal.token &&
+                      new Date().getTime() - new Date(item.timestamp).getTime() < 24 * 60 * 60 * 1000,
+                  )
+
+                  if (!hasRecentSignal) {
+                    await models.Notification.create({
+                      userId: user._id,
+                      type: "signal",
+                      message: `New ${appSignal.type} signal for ${appSignal.token} at ${appSignal.price}`,
+                      relatedId: signal._id,
+                      createdAt: new Date(),
+                    })
+                    
+                    notifiedUsers++;
+                    logger.info(`Created SELL notification for user ${user._id} who owns ${appSignal.token}`, {
+                      context: "CronJob"
+                    })
+                  } else {
+                    logger.info(`Skipped SELL notification for user ${user._id} - already received signal for ${appSignal.token} in last 24h`, {
+                      context: "CronJob"
+                    })
+                  }
                 } else {
-                  logger.info(`Skipped SELL notification for user ${user._id} - already received signal for ${appSignal.token} in last 24h`, {
+                  logger.info(`User ${user._id} doesn't own ${appSignal.token}, skipping SELL notification`, {
                     context: "CronJob"
                   })
                 }
               } else {
-                logger.info(`User ${user._id} doesn't own ${appSignal.token}, skipping SELL notification`, {
+                logger.info(`User ${user._id} has no portfolio or holdings, skipping SELL notification`, {
                   context: "CronJob"
                 })
               }
-            } else {
-              logger.info(`User ${user._id} has no portfolio or holdings, skipping SELL notification`, {
-                context: "CronJob"
-              })
             }
+            
+            logger.info(`Notified ${notifiedUsers} users about SELL signal for ${appSignal.token}`)
           }
-          
-          logger.info(`Notified ${notifiedUsers} users about SELL signal for ${appSignal.token}`)
+        } else {
+          results.push({
+            token: appSignal.token,
+            type: appSignal.type,
+            created: false,
+            reason: "Signal already exists",
+            price: appSignal.price
+          })
         }
-      } else {
+      } catch (signalError) {
+        const errorMessage = signalError instanceof Error ? signalError.message : String(signalError);
+        logger.error(`Error processing signal for ${ekinSignal.symbol}: ${errorMessage}`);
+        
         results.push({
-          token: appSignal.token,
-          type: appSignal.type,
+          token: ekinSignal.symbol || "unknown",
+          type: ekinSignal.type || "unknown",
           created: false,
-          reason: "Signal already exists",
-        })
+          reason: `Error: ${errorMessage}`
+        });
       }
     }
 

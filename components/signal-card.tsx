@@ -1,6 +1,7 @@
+// Updated SignalCard component with proper TypeScript typing
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -13,7 +14,7 @@ import { toast } from "sonner"
 import { logger } from "@/lib/logger"
 
 interface Signal {
-  id: string; // Ensure ID is always defined
+  id: string;
   type: "BUY" | "SELL";
   token: string;
   price: number;
@@ -32,6 +33,7 @@ interface SignalCardProps {
   exchangeConnected: boolean;
   userOwnsToken?: boolean;
   accumulatedPercentage?: number;
+  isOldSignal?: boolean;
 }
 
 export function SignalCard({ 
@@ -39,69 +41,98 @@ export function SignalCard({
   onAction, 
   exchangeConnected, 
   userOwnsToken = false,
-  accumulatedPercentage = 0 
+  accumulatedPercentage = 0,
+  isOldSignal = false
 }: SignalCardProps) {
   const [timeLeft, setTimeLeft] = useState<number>(0);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [showDetails, setShowDetails] = useState(false);
+  const [showDetails, setShowDetails] = useState<boolean>(false);
   const [actionType, setActionType] = useState<"full" | "partial" | "skip" | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Ensure signal has an ID before proceeding
+  // Calculate the initial time left based on signal creation and expiration time
   useEffect(() => {
-    if (!signal.id) {
-      logger.error("Signal is missing ID");
-      setError("Invalid signal data. Please refresh the page.");
-    }
-  }, [signal]);
-  
-  // Calculate time left only when needed
-  const calculateTimeLeft = useMemo(() => {
     try {
+      if (isOldSignal) {
+        // For old signals (>10 minutes), show 0 time left
+        setTimeLeft(0);
+        return;
+      }
+
+      // For active signals, calculate the proper time left
       const expiresAt = new Date(signal.expiresAt).getTime();
       const now = new Date().getTime();
       const difference = expiresAt - now;
-      return Math.max(0, Math.floor(difference / 1000));
+      const secondsLeft = Math.max(0, Math.floor(difference / 1000));
+      setTimeLeft(secondsLeft);
+      
+      // Clear any existing timer
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      
+      // Set up a timer that updates every second
+      timerRef.current = setInterval(() => {
+        setTimeLeft(prevTime => {
+          const newTime = Math.max(0, prevTime - 1);
+          // Stop the timer when it reaches 0
+          if (newTime === 0 && timerRef.current) {
+            clearInterval(timerRef.current);
+          }
+          return newTime;
+        });
+      }, 1000);
+      
+      // Clean up the timer on unmount or when signal changes
+      return () => {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+        }
+      };
     } catch (e) {
       logger.error(`Error calculating time left: ${e instanceof Error ? e.message : "Unknown error"}`);
-      return 0;
+      setTimeLeft(0);
     }
-  }, [signal.expiresAt]);
-  
-  useEffect(() => {
-    // Set initial time left
-    setTimeLeft(calculateTimeLeft);
-    
-    // Update timer every second for countdown
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        const newTime = Math.max(0, prev - 1);
-        return newTime;
-      });
-    }, 1000);
+  }, [signal.expiresAt, signal.id, isOldSignal]);
 
-    return () => clearInterval(timer);
-  }, [calculateTimeLeft]);
-
-  const formatTime = (seconds: number) => {
+  const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number) => {
+  const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number): Promise<void> => {
     // Ensure signal has a valid ID
     if (!signal.id) {
       logger.error("Cannot process action: Signal ID is missing");
       setError("Invalid signal data. Cannot process action.");
       return;
     }
-
+  
     setIsLoading(true);
     setError(null);
     setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip");
-
+  
     try {
+      // Handle exchange connection modals only for BUY/SELL actions, not for SKIP
+      if ((action === "accept" || action === "accept-partial") && !exchangeConnected) {
+        // If not connected to exchange and trying to accept, show connect modal
+        setIsLoading(false);
+        setActionType(null);
+        onAction("skip", signal.id); // Mark as skipped in the UI
+        return;
+      }
+      
+      // For SELL signals, verify user has the token
+      if (signal.type === "SELL" && (action === "accept" || action === "accept-partial") && !userOwnsToken) {
+        setError(`You don't own any ${signal.token} to sell`);
+        setIsLoading(false);
+        setActionType(null);
+        return;
+      }
+  
+      // Call the onAction callback provided by parent
       await onAction(action, signal.id, percentage);
       
       // Try to trigger haptic feedback for better UX
@@ -118,9 +149,9 @@ export function SignalCard({
       setIsLoading(false);
       setActionType(null);
     }
-  }
+  };
 
-  const getRiskColor = (risk: string) => {
+  const getRiskColor = (risk: string): string => {
     switch (risk) {
       case "low":
         return "bg-green-500"
@@ -135,10 +166,40 @@ export function SignalCard({
 
   // Calculate progress percentage for timer
   const totalTime = 10 * 60 // 10 minutes in seconds
-  const progressPercentage = (timeLeft / totalTime) * 100
-  const isTimeRunningOut = timeLeft < 60 // Less than 1 minute left
+  const progressPercentage = Math.min(100, Math.max(0, (timeLeft / totalTime) * 100))
+  const isTimeRunningOut = timeLeft < 60 && timeLeft > 0 // Less than 1 minute left but not expired
 
-  const handleOpenLink = () => {
+  // Format the received time to show when the signal was created
+  const getFormattedTime = (): string => {
+    try {
+      const createdDate = new Date(signal.createdAt);
+      return createdDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (e) {
+      return "Unknown time";
+    }
+  }
+
+  // Calculate how long ago the signal was received
+  const getTimeSinceReceived = (): string => {
+    try {
+      const createdDate = new Date(signal.createdAt);
+      const now = new Date();
+      const diffMs = now.getTime() - createdDate.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      
+      if (diffMins < 60) {
+        return `${diffMins}m ago`;
+      } else if (diffMins < 24 * 60) {
+        return `${Math.floor(diffMins / 60)}h ago`;
+      } else {
+        return `${Math.floor(diffMins / (60 * 24))}d ago`;
+      }
+    } catch (e) {
+      return "Unknown";
+    }
+  }
+
+  const handleOpenLink = (): void => {
     if (signal.link) {
       window.open(signal.link, "_blank")
     }
@@ -166,10 +227,10 @@ export function SignalCard({
             <p className="text-xl font-bold">{formatCurrency(signal.price)}</p>
           </div>
           <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">Time Left</p>
-            <p className={`text-xl font-bold flex items-center ${isTimeRunningOut ? "text-red-500" : ""}`}>
-              <Clock className={`h-4 w-4 mr-1 ${isTimeRunningOut ? "text-red-500 animate-pulse" : ""}`} />
-              {formatTime(timeLeft)}
+            <p className="text-sm text-muted-foreground">Received</p>
+            <p className="text-xl font-bold flex items-center">
+              <Clock className="h-4 w-4 mr-1" />
+              {getTimeSinceReceived()}
             </p>
           </div>
         </div>
@@ -246,8 +307,8 @@ export function SignalCard({
           </div>
         )}
 
-        {/* Auto-execution timer - Only show if exchange is connected */}
-        {exchangeConnected && (
+        {/* Auto-execution timer - Only show if exchange is connected and the signal is not old */}
+        {exchangeConnected && !isOldSignal && (
           <div className="mt-4 relative">
             <div className="flex justify-between text-xs mb-1">
               <span className="font-medium">Auto-execution in {formatTime(timeLeft)}</span>
@@ -277,6 +338,23 @@ export function SignalCard({
                       : `If you don't take action, the system will automatically sell all your ${signal.token} holdings.`}
                   </p>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Show timestamp for old signals instead of countdown */}
+        {isOldSignal && (
+          <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-900/20 rounded-md border border-gray-200 dark:border-gray-800">
+            <div className="flex items-start">
+              <Info className="h-5 w-5 text-gray-600 dark:text-gray-400 mt-0.5 mr-2 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-300">
+                  Signal received at {getFormattedTime()}
+                </p>
+                <p className="text-xs mt-1 text-gray-700 dark:text-gray-400">
+                  This signal was received more than 10 minutes ago. Auto-execution timeout has passed.
+                </p>
               </div>
             </div>
           </div>
@@ -331,10 +409,15 @@ export function SignalCard({
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            <Button variant="outline" className="flex-1" onClick={() => handleAction("skip")} disabled={isLoading}>
-              {isLoading && actionType === "skip" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Skip
-            </Button>
+            <Button 
+  variant="outline" 
+  className="w-full col-span-2" 
+  onClick={() => handleAction("skip")} 
+  disabled={isLoading}
+>
+  {isLoading && actionType === "skip" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+  Don't Sell
+</Button>
           </>
         ) : (
           <div className="grid grid-cols-2 gap-2 w-full">
@@ -398,4 +481,4 @@ export function SignalCard({
       )}
     </Card>
   )
-}
+};
