@@ -15,10 +15,11 @@ import { tradingProxy } from "@/lib/trading-proxy"
 import { logger } from "@/lib/logger"
 
 interface SettingsProps {
-  user: SessionUser
+  user: SessionUser;
+  onUpdateSuccess?: () => void;
 }
 
-export function Settings({ user }: SettingsProps) {
+export function Settings({ user, onUpdateSuccess }: SettingsProps) {
   const router = useRouter()
   const [exchange, setExchange] = useState<"binance" | "btcc">(user.exchange || "binance")
   const [apiKey, setApiKey] = useState("")
@@ -86,6 +87,13 @@ export function Settings({ user }: SettingsProps) {
           if (data.riskLevel) {
             setRiskLevel(data.riskLevel as "low" | "medium" | "high")
           }
+          // Also update exchange status if available
+          if (data.exchangeConnected !== undefined) {
+            setExchangeStatus({
+              connected: data.exchangeConnected,
+              lastChecked: new Date()
+            })
+          }
         }
       } catch (error) {
         logger.error(`Error fetching user settings: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -147,8 +155,13 @@ export function Settings({ user }: SettingsProps) {
             lastChecked: new Date()
           })
           
-          // Refresh the page to update the UI
-          setTimeout(() => router.refresh(), 1500)
+          // Call the onUpdateSuccess callback to refresh parent components
+          if (onUpdateSuccess) {
+            setTimeout(() => onUpdateSuccess(), 1000)
+          } else {
+            // Fallback to refreshing the page
+            setTimeout(() => router.refresh(), 1500)
+          }
         } catch (proxyError) {
           throw new Error(proxyError instanceof Error ? proxyError.message : "Failed to register with proxy server")
         }
@@ -161,7 +174,7 @@ export function Settings({ user }: SettingsProps) {
           },
           body: JSON.stringify({
             exchange,
-            connected: false
+            connected: exchangeStatus.connected
           }),
         })
         
@@ -171,7 +184,13 @@ export function Settings({ user }: SettingsProps) {
         }
         
         setSuccess("Exchange type updated successfully")
-        setTimeout(() => router.refresh(), 1500)
+        
+        // Call the onUpdateSuccess callback
+        if (onUpdateSuccess) {
+          setTimeout(() => onUpdateSuccess(), 1000)
+        } else {
+          setTimeout(() => router.refresh(), 1500)
+        }
       } else {
         setSuccess("No changes detected")
       }
@@ -207,7 +226,13 @@ export function Settings({ user }: SettingsProps) {
       }
 
       setSuccess("Risk level updated successfully")
-      setTimeout(() => router.refresh(), 1500)
+      
+      // Call the onUpdateSuccess callback
+      if (onUpdateSuccess) {
+        setTimeout(() => onUpdateSuccess(), 1000)
+      } else {
+        setTimeout(() => router.refresh(), 1500)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update risk settings")
     } finally {
@@ -239,7 +264,12 @@ export function Settings({ user }: SettingsProps) {
         lastChecked: new Date()
       })
       
-      setTimeout(() => router.refresh(), 1500)
+      // Call the onUpdateSuccess callback
+      if (onUpdateSuccess) {
+        setTimeout(() => onUpdateSuccess(), 1000)
+      } else {
+        setTimeout(() => router.refresh(), 1500)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to disconnect exchange")
     } finally {
@@ -272,7 +302,7 @@ export function Settings({ user }: SettingsProps) {
               <Check className="h-4 w-4 text-green-600 dark:text-green-400" />
               <AlertTitle className="text-green-800 dark:text-green-300">Exchange Connected</AlertTitle>
               <AlertDescription className="text-green-700 dark:text-green-400">
-                Your {user.exchange} account is currently connected
+                Your {exchange} account is currently connected
               </AlertDescription>
             </Alert>
           )}

@@ -158,11 +158,15 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
         
         // Handle success callback after a delay
         setTimeout(() => {
+          // Close the modal
           onOpenChange(false)
+          
+          // Call the onSuccess callback if provided
           if (onSuccess) {
             onSuccess()
           } else {
-            router.refresh()
+            // Refresh the page if no callback provided
+            window.location.reload()
           }
         }, 1500)
       } catch (proxyError) {
@@ -217,50 +221,101 @@ export function ConnectExchangeModal({ open, onOpenChange, userId, onSuccess }: 
           </div>
         ) : (
           <>
-           <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-200 dark:border-blue-800">
-                <p className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-2">
-                  Important: Whitelist BOTH these IP addresses
-                </p>
-                
-                <div className="space-y-3">
-                  <div className="flex items-start">
-                    <div className="bg-blue-100 dark:bg-blue-800 rounded-full p-1 mr-2 text-blue-600 dark:text-blue-300">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" />
-                        <path d="M4 6v12c0 1.1.9 2 2 2h14v-4" />
-                        <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-blue-700 dark:text-blue-400">1. Your current IP address:</p>
-                      <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200 text-sm">
-                        {isLoadingIp ? "Loading..." : userIp}
-                      </code>
-                    </div>
+            <div className="space-y-4 mb-4">
+              <div className="space-y-2">
+                <Label>Select Exchange</Label>
+                <RadioGroup
+                  value={exchange}
+                  onValueChange={(value) => setExchange(value as "binance" | "btcc")}
+                  className="flex flex-col space-y-1"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="binance" id="binance" />
+                    <Label htmlFor="binance">Binance (Spot)</Label>
                   </div>
-                  
-                  <div className="flex items-start">
-                    <div className="bg-blue-100 dark:bg-blue-800 rounded-full p-1 mr-2 text-blue-600 dark:text-blue-300">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-                        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-                        <line x1="6" y1="6" x2="6.01" y2="6"></line>
-                        <line x1="6" y1="18" x2="6.01" y2="18"></line>
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-blue-700 dark:text-blue-400">2. Our server IP address:</p>
-                      <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200 text-sm">
-                        13.60.210.111
-                      </code>
-                    </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="btcc" id="btcc" />
+                    <Label htmlFor="btcc">BTCC (Futures)</Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="apiKey">API Key</Label>
+                <Input
+                  id="apiKey"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Enter your API key"
+                  disabled={isLoading || !proxyServerAvailable}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="apiSecret">API Secret</Label>
+                <Input
+                  id="apiSecret"
+                  type="password"
+                  value={apiSecret}
+                  onChange={(e) => setApiSecret(e.target.value)}
+                  placeholder="Enter your API secret"
+                  disabled={isLoading || !proxyServerAvailable}
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-200 dark:border-blue-800">
+              <p className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-2">
+                Important: Whitelist BOTH these IP addresses
+              </p>
+              
+              <div className="space-y-3">
+                <div className="flex items-start">
+                  <div className="bg-blue-100 dark:bg-blue-800 rounded-full p-1 mr-2 text-blue-600 dark:text-blue-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" />
+                      <path d="M4 6v12c0 1.1.9 2 2 2h14v-4" />
+                      <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-blue-700 dark:text-blue-400">1. Your current IP address:</p>
+                    <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200 text-sm">
+                      {isLoadingIp ? "Loading..." : userIp}
+                    </code>
                   </div>
                 </div>
                 
-                <p className="text-xs mt-2 text-blue-600 dark:text-blue-400">
-                  Both IP addresses must be added to your exchange API whitelist settings
-                </p>
+                <div className="flex items-start">
+                  <div className="bg-blue-100 dark:bg-blue-800 rounded-full p-1 mr-2 text-blue-600 dark:text-blue-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                      <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                      <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                      <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-blue-700 dark:text-blue-400">2. Our server IP address:</p>
+                    <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 rounded text-blue-900 dark:text-blue-200 text-sm">
+                      13.60.210.111
+                    </code>
+                  </div>
+                </div>
               </div>
+              
+              <p className="text-xs mt-2 text-blue-600 dark:text-blue-400">
+                Both IP addresses must be added to your exchange API whitelist settings
+              </p>
+            </div>
+
+            {error && (
+              <Alert variant="destructive" className="mt-4">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
             <DialogFooter className="flex flex-col sm:flex-row gap-2 mt-4">
               <Button variant="outline" onClick={() => onOpenChange(false)}>

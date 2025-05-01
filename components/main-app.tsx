@@ -16,6 +16,7 @@ import type { SessionUser } from "@/lib/auth"
 import { logger } from "@/lib/logger"
 import { toast } from "sonner"
 import { telegramService } from "@/lib/telegram-service"
+import { formatCurrency } from "@/lib/utils"
 
 export function MainApp() {
   const [user, setUser] = useState<SessionUser | null>(null)
@@ -23,6 +24,8 @@ export function MainApp() {
   const [isLoading, setIsLoading] = useState(true)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [unreadNotifications, setUnreadNotifications] = useState(0)
+  const [portfolioValue, setPortfolioValue] = useState<number | null>(null)
+  const [isLoadingPortfolio, setIsLoadingPortfolio] = useState(false)
   const router = useRouter()
 
   // Check for unread notifications
@@ -39,6 +42,29 @@ export function MainApp() {
       logger.error(`Error checking unread notifications: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
+
+  // Fetch portfolio summary data
+  const fetchPortfolioSummary = useCallback(async () => {
+    if (!user?.exchangeConnected) return
+
+    try {
+      setIsLoadingPortfolio(true)
+      const response = await fetch("/api/portfolio/summary")
+      if (response.ok) {
+        const data = await response.json()
+        if (data.totalValue !== undefined) {
+          setPortfolioValue(data.totalValue)
+          logger.info("Portfolio summary fetched successfully", {
+            context: "MainApp",
+          })
+        }
+      }
+    } catch (error) {
+      logger.error(`Error fetching portfolio summary: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setIsLoadingPortfolio(false)
+    }
+  }, [user?.exchangeConnected])
 
   useEffect(() => {
     // Fetch user data
@@ -84,6 +110,20 @@ export function MainApp() {
     }
   }, [router])
 
+  // Fetch portfolio value when user is loaded or connection status changes
+  useEffect(() => {
+    if (user?.exchangeConnected) {
+      fetchPortfolioSummary()
+      
+      // Refresh portfolio value every 2 minutes
+      const portfolioInterval = setInterval(fetchPortfolioSummary, 120000)
+      
+      return () => {
+        clearInterval(portfolioInterval)
+      }
+    }
+  }, [user?.exchangeConnected, fetchPortfolioSummary])
+
   // Handle onboarding completion
   const handleOnboardingComplete = () => {
     setShowOnboarding(false)
@@ -93,6 +133,28 @@ export function MainApp() {
   // Handle tab change
   const handleTabChange = (value: string) => {
     setActiveTab(value)
+  }
+
+  // Refresh user data (useful after connecting exchange)
+  const refreshUserData = async () => {
+    try {
+      const response = await fetch("/api/user")
+      if (response.ok) {
+        const userData = await response.json()
+        setUser(userData)
+        logger.info("User data refreshed successfully", {
+          context: "MainApp",
+          userId: userData.id,
+        })
+        
+        // Also refresh portfolio if exchange is connected
+        if (userData.exchangeConnected) {
+          fetchPortfolioSummary()
+        }
+      }
+    } catch (error) {
+      logger.error("Error refreshing user data:", error instanceof Error ? error : new Error(String(error)))
+    }
   }
 
   if (isLoading) {
@@ -117,13 +179,21 @@ export function MainApp() {
         {/* Add header with app name */}
         <div className="bg-background border-b py-2 px-4 flex justify-between items-center">
           <h1 className="text-lg font-bold">Cycles.fun</h1>
-          {!user.exchangeConnected && (
+          {!user.exchangeConnected ? (
             <button 
               onClick={() => setActiveTab("settings")}
               className="text-sm text-primary"
             >
               Connect Wallet
             </button>
+          ) : (
+            <div className="flex items-center">
+              {isLoadingPortfolio ? (
+                <div className="text-sm text-muted-foreground animate-pulse">Loading...</div>
+              ) : portfolioValue !== null ? (
+                <div className="text-sm font-medium">{formatCurrency(portfolioValue)}</div>
+              ) : null}
+            </div>
           )}
         </div>
         
@@ -132,7 +202,7 @@ export function MainApp() {
         
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full flex-1 flex flex-col">
           <TabsContent value="trades" className="flex-1 p-0">
-            <Dashboard user={user} />
+            <Dashboard user={user} onExchangeStatusChange={refreshUserData} />
           </TabsContent>
           
           <TabsContent value="leaders" className="flex-1 p-0">
@@ -147,10 +217,10 @@ export function MainApp() {
             {!user.exchangeConnected && activeTab === "settings" ? (
               <div className="container mx-auto p-4">
                 <h2 className="text-xl font-bold mb-4">Connect Your Exchange</h2>
-                <Settings user={user} />
+                <Settings user={user} onUpdateSuccess={refreshUserData} />
               </div>
             ) : (
-              <Settings user={user} />
+              <Settings user={user} onUpdateSuccess={refreshUserData} />
             )}
           </TabsContent>
 

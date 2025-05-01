@@ -1,4 +1,3 @@
-// Updated Dashboard Component to fix the issues
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
@@ -17,10 +16,11 @@ import { SignalCard } from "@/components/signal-card"
 import { useRouter } from "next/navigation"
 
 interface DashboardProps {
-  user: SessionUser
+  user: SessionUser;
+  onExchangeStatusChange?: () => void;
 }
 
-export function Dashboard({ user }: DashboardProps) {
+export function Dashboard({ user, onExchangeStatusChange }: DashboardProps) {
   const [signals, setSignals] = useState<Signal[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [userHoldings, setUserHoldings] = useState<Record<string, number>>({})
@@ -34,7 +34,6 @@ export function Dashboard({ user }: DashboardProps) {
   const router = useRouter()
   const [notifiedSignalIds, setNotifiedSignalIds] = useState<Set<string>>(new Set());
 
-  
   // Fetch active signals - wrapped in useCallback to be reusable
   const fetchSignals = useCallback(async (showLoadingState = true) => {
     try {
@@ -270,7 +269,6 @@ export function Dashboard({ user }: DashboardProps) {
   }, [checkForNewSignals]);
   
   // Handle signal actions (Buy/Skip)
-
   const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => {
     try {
       // Get the signal from our state
@@ -405,6 +403,20 @@ export function Dashboard({ user }: DashboardProps) {
       });
     }
   }
+
+  // Handle successful exchange connection
+  const handleExchangeConnected = () => {
+    // Refresh user data
+    if (onExchangeStatusChange) {
+      onExchangeStatusChange();
+    }
+    
+    // Fetch holdings after connection
+    fetchUserHoldings();
+    
+    // Close the modal
+    setShowConnectModal(false);
+  }
   
   if (isLoading && signals.length === 0) {
     return (
@@ -508,7 +520,7 @@ export function Dashboard({ user }: DashboardProps) {
         open={showConnectModal} 
         onOpenChange={setShowConnectModal}
         userId={Number(user.id)}
-        onSuccess={() => window.location.reload()} 
+        onSuccess={handleExchangeConnected}
       />
     </div>
   )

@@ -1,4 +1,3 @@
-// Updated SignalCard component with proper TypeScript typing
 "use client"
 
 import { useState, useEffect, useRef } from "react"
@@ -113,14 +112,14 @@ export function SignalCard({
     setIsLoading(true);
     setError(null);
     setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip");
-  
+    
     try {
-      // Handle exchange connection modals only for BUY/SELL actions, not for SKIP
+      // If not skip and user is not connected, show connect modal by calling onAction
       if ((action === "accept" || action === "accept-partial") && !exchangeConnected) {
-        // If not connected to exchange and trying to accept, show connect modal
+        // Important: we're passing the same action but not displaying the skip toast when it's a connection request
+        onAction(action, signal.id, percentage);
         setIsLoading(false);
         setActionType(null);
-        onAction("skip", signal.id); // Mark as skipped in the UI
         return;
       }
       
@@ -131,7 +130,7 @@ export function SignalCard({
         setActionType(null);
         return;
       }
-  
+      
       // Call the onAction callback provided by parent
       await onAction(action, signal.id, percentage);
       
@@ -410,14 +409,14 @@ export function SignalCard({
               </Tooltip>
             </TooltipProvider>
             <Button 
-  variant="outline" 
-  className="w-full col-span-2" 
-  onClick={() => handleAction("skip")} 
-  disabled={isLoading}
->
-  {isLoading && actionType === "skip" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-  Don't Sell
-</Button>
+              variant="outline" 
+              className="w-full col-span-2" 
+              onClick={() => handleAction("skip")} 
+              disabled={isLoading}
+            >
+              {isLoading && actionType === "skip" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Skip This Signal
+            </Button>
           </>
         ) : (
           <div className="grid grid-cols-2 gap-2 w-full">
@@ -466,7 +465,7 @@ export function SignalCard({
               disabled={isLoading}
             >
               {isLoading && actionType === "skip" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Don't Sell
+              Skip This Signal
             </Button>
           </div>
         )}
@@ -481,4 +480,4 @@ export function SignalCard({
       )}
     </Card>
   )
-};
+}
