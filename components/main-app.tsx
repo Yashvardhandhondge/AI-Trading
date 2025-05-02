@@ -184,7 +184,7 @@ export function MainApp() {
               onClick={() => setActiveTab("settings")}
               className="text-sm text-primary"
             >
-              Connect Wallet
+              Connect Exchange
             </button>
           ) : (
             <div className="flex items-center">
