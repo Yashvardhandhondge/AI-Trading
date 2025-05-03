@@ -101,54 +101,65 @@ export function SignalCard({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number): Promise<void> => {
-    // Ensure signal has a valid ID
-    if (!signal.id) {
-      logger.error("Cannot process action: Signal ID is missing");
-      setError("Invalid signal data. Cannot process action.");
-      return;
-    }
+ // components/signal-card.tsx - Update the handleAction function
+
+const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number): Promise<void> => {
+  // Ensure signal has a valid ID
+  if (!signal.id) {
+    logger.error("Cannot process action: Signal ID is missing");
+    setError("Invalid signal data. Cannot process action.");
+    return;
+  }
+
+  setIsLoading(true);
+  setError(null);
+  setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip");
   
-    setIsLoading(true);
-    setError(null);
-    setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip");
-    
-    try {
-      // If not skip and user is not connected, show connect modal by calling onAction
-      if ((action === "accept" || action === "accept-partial") && !exchangeConnected) {
-        // Important: we're passing the same action but not displaying the skip toast when it's a connection request
-        onAction(action, signal.id, percentage);
-        setIsLoading(false);
-        setActionType(null);
-        return;
-      }
-      
-      // For SELL signals, verify user has the token
-      if (signal.type === "SELL" && (action === "accept" || action === "accept-partial") && !userOwnsToken) {
-        setError(`You don't own any ${signal.token} to sell`);
-        setIsLoading(false);
-        setActionType(null);
-        return;
-      }
-      
-      // Call the onAction callback provided by parent
-      await onAction(action, signal.id, percentage);
-      
-      // Try to trigger haptic feedback for better UX
-      try {
-        telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification");
-      } catch (e) {
-        // Ignore errors with haptics
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to process action";
-      setError(errorMessage);
-      logger.error(`Error processing signal action: ${errorMessage}`);
-    } finally {
+  try {
+    // If not skip and user is not connected, show connect modal by calling onAction
+    if ((action === "accept" || action === "accept-partial") && !exchangeConnected) {
+      // Important: we're passing the same action but not displaying the skip toast when it's a connection request
+      onAction(action, signal.id, percentage);
       setIsLoading(false);
       setActionType(null);
+      return;
     }
-  };
+    
+    // For SELL signals, verify user has the token
+    if (signal.type === "SELL" && (action === "accept" || action === "accept-partial") && !userOwnsToken) {
+      setError(`You don't own any ${signal.token} to sell`);
+      setIsLoading(false);
+      setActionType(null);
+      return;
+    }
+    
+    // Call the onAction callback provided by parent
+    await onAction(action, signal.id, percentage);
+    
+    // Try to trigger haptic feedback for better UX
+    try {
+      telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification");
+    } catch (e) {
+      // Ignore errors with haptics
+    }
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : "Failed to process action";
+    
+    // Enhance error message for symbol issues
+    if (errorMessage.includes("Invalid symbol") || errorMessage.includes("Invalid trading symbol")) {
+      setError(`${signal.token} is not available on your exchange. This may be a commodity or token that requires a different exchange.`);
+    } else if (errorMessage.includes("Error 400") || errorMessage.includes("API error")) {
+      setError(`Exchange API error: Unable to trade ${signal.token}. This asset may not be supported.`);
+    } else {
+      setError(errorMessage);
+    }
+    
+    logger.error(`Error processing signal action: ${errorMessage}`);
+  } finally {
+    setIsLoading(false);
+    setActionType(null);
+  }
+};
 
   const getRiskColor = (risk: string): string => {
     switch (risk) {

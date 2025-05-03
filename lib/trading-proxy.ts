@@ -227,21 +227,40 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
         userId,
         data: { symbol, side, quantity }
       });
-
+  
+      // Resolve the symbol using our mapping
+      const resolvedSymbol = this.resolveSymbol(symbol);
+      
+      // Validate the symbol if it's not the same as the original
+      if (resolvedSymbol !== symbol) {
+        const isValid = await this.validateSymbol(userId, resolvedSymbol);
+        if (!isValid) {
+          logger.error(`Resolved symbol ${resolvedSymbol} is also invalid`);
+          throw new Error(`Invalid trading symbol: ${symbol}. This asset is not available on your exchange.`);
+        }
+      } else {
+        // Validate the original symbol
+        const isValid = await this.validateSymbol(userId, symbol);
+        if (!isValid) {
+          throw new Error(`Invalid trading symbol: ${symbol}. This asset is not available on your exchange.`);
+        }
+      }
+  
+      // Use the resolved symbol for the trade
       const params: Record<string, any> = {
-        symbol,
+        symbol: resolvedSymbol,
         side,
         quantity: quantity.toFixed(5),
         type: price ? 'LIMIT' : 'MARKET',
       };
-
+  
       if (price) {
         params.price = price.toFixed(2);
         params.timeInForce = 'GTC'; // Good Till Canceled
       }
-
+  
       const response = await this.executeProxyRequest(userId, '/api/v3/order', 'POST', params);
-
+  
       return {
         orderId: response.orderId,
         symbol: response.symbol,
@@ -368,6 +387,43 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
     }
   }
 
+  // lib/trading-proxy.ts
+
+// Add symbol validation method
+public async validateSymbol(userId: string | number, symbol: string): Promise<boolean> {
+  try {
+    // Get exchange info from Binance
+    const exchangeInfo = await this.executeProxyRequest(userId, '/api/v3/exchangeInfo');
+    
+    // Check if the symbol exists in the exchange info
+    return exchangeInfo.symbols.some((s: any) => s.symbol === symbol);
+  } catch (error) {
+    logger.error(`Error validating symbol ${symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return false;
+  }
+}
+
+// Add symbol resolution for commodities and other special cases
+private symbolMap: Record<string, string> = {
+  'GOLDUSDT': 'PAXGUSDT',  // Map Gold to Paxos Gold
+  'SILVERUSDT': 'XAGUSDT', // Map Silver to a silver token if available
+  // Add other mappings as needed
+};
+
+private resolveSymbol(symbol: string): string {
+  // Check if we have a direct mapping for this symbol
+  if (this.symbolMap[symbol]) {
+    logger.info(`Resolving ${symbol} to ${this.symbolMap[symbol]}`);
+    return this.symbolMap[symbol];
+  }
+  
+  // Otherwise return the original symbol
+  return symbol;
+}
+
+// Update executeTrade method to use symbol validation and resolution
+
+
   /**
    * Mock portfolio data for development
    */
@@ -401,6 +457,8 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
     };
   }
 }
+
+
 
 // Export a singleton instance
 export const tradingProxy = TradingProxyService.getInstance();
