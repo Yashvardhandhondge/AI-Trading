@@ -280,7 +280,6 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
    * Get portfolio data
    */
 // Update the getPortfolio method to properly calculate totalValue
-// lib/trading-proxy.ts - Updated getPortfolio method
 public async getPortfolio(userId: string | number): Promise<any> {
   try {
     // Get balances
@@ -297,6 +296,9 @@ public async getPortfolio(userId: string | number): Promise<any> {
       balance => ['USDT', 'USDC', 'BUSD', 'DAI'].includes(balance.asset)
     );
 
+    // Calculate stablecoin value (assuming 1:1 with USD)
+    const stablecoinValue = stablecoins.reduce((sum, coin) => sum + coin.total, 0);
+    
     // Get current prices for all crypto assets
     const holdings = await Promise.all(
       cryptoHoldings.map(async (balance) => {
@@ -314,7 +316,6 @@ public async getPortfolio(userId: string | number): Promise<any> {
             pnlPercentage: balance.pnlPercentage || 0,
           };
         } catch (error) {
-          // Handle errors for this specific asset
           logger.error(`Error processing holding for ${balance.asset}: ${error instanceof Error ? error.message : "Unknown error"}`);
           return {
             token: balance.asset,
@@ -332,10 +333,7 @@ public async getPortfolio(userId: string | number): Promise<any> {
     // Calculate crypto value (sum of all non-stablecoin holdings)
     const cryptoValue = holdings.reduce((sum, holding) => sum + holding.value, 0);
     
-    // Calculate stablecoin value (sum of all stablecoin balances)
-    const stablecoinValue = stablecoins.reduce((sum, coin) => sum + coin.total, 0);
-
-    // Calculate total portfolio value
+    // Calculate total portfolio value (crypto + stablecoins)
     const totalValue = cryptoValue + stablecoinValue;
     
     return {
@@ -343,6 +341,8 @@ public async getPortfolio(userId: string | number): Promise<any> {
       freeCapital: stablecoins.reduce((sum, coin) => sum + coin.free, 0),
       allocatedCapital: cryptoValue,
       holdings,
+      realizedPnl: 0, // You might want to calculate this from trade history
+      unrealizedPnl: holdings.reduce((sum, holding) => sum + holding.pnl, 0)
     };
   } catch (error) {
     logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : "Unknown error"}`);
