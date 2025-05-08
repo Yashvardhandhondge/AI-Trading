@@ -7,6 +7,8 @@ import { logger } from "@/lib/logger"
 
 export async function GET(request: NextRequest) {
   try {
+    console.log("[DEBUG API] Portfolio request received");
+
     const sessionUser = await getSessionUser()
 
     if (!sessionUser) {
@@ -29,12 +31,25 @@ export async function GET(request: NextRequest) {
 
     // Get portfolio data using the trading proxy
     try {
+      console.log("[DEBUG API] Fetching portfolio from proxy...");
+
       // Check if portfolio exists in database
       let portfolio = await models.Portfolio.findOne({ userId: user._id })
 
       if (!portfolio) {
         // Initialize portfolio using the trading proxy
         const portfolioData = await tradingProxy.getPortfolio(sessionUser.id)
+
+        const cryptoValue = portfolioData.holdings.reduce((sum:any, h:any) => sum + h.value, 0);
+        const stablecoinValue = portfolioData.freeCapital || 0;
+        const totalValue = portfolioData.totalValue;
+        
+        console.log(`[DEBUG API] Calculated values:`);
+        console.log(`[DEBUG API] - Crypto value: ${cryptoValue}`);
+        console.log(`[DEBUG API] - Stablecoin value: ${stablecoinValue}`);
+        console.log(`[DEBUG API] - Total value from proxy: ${totalValue}`);
+        console.log(`[DEBUG API] - Calculated total (crypto + stablecoins): ${cryptoValue + stablecoinValue}`);
+        
 
         portfolio = await models.Portfolio.create({
           userId: user._id,
