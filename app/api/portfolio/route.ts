@@ -40,17 +40,7 @@ export async function GET(request: NextRequest) {
         // Initialize portfolio using the trading proxy
         const portfolioData = await tradingProxy.getPortfolio(sessionUser.id)
 
-        const cryptoValue = portfolioData.holdings.reduce((sum:any, h:any) => sum + h.value, 0);
-        const stablecoinValue = portfolioData.freeCapital || 0;
-        const totalValue = portfolioData.totalValue;
-        
-        console.log(`[DEBUG API] Calculated values:`);
-        console.log(`[DEBUG API] - Crypto value: ${cryptoValue}`);
-        console.log(`[DEBUG API] - Stablecoin value: ${stablecoinValue}`);
-        console.log(`[DEBUG API] - Total value from proxy: ${totalValue}`);
-        console.log(`[DEBUG API] - Calculated total (crypto + stablecoins): ${cryptoValue + stablecoinValue}`);
-        
-
+        // Create portfolio document from the data received from trading proxy
         portfolio = await models.Portfolio.create({
           userId: user._id,
           totalValue: portfolioData.totalValue,
@@ -71,20 +61,28 @@ export async function GET(request: NextRequest) {
         const fiveMinutes = 5 * 60 * 1000
         
         if (now - lastUpdate > fiveMinutes) {
-          const portfolioData = await tradingProxy.getPortfolio(sessionUser.id)
-          
-          // Update the portfolio with fresh data
-          portfolio.totalValue = portfolioData.totalValue
-          portfolio.freeCapital = portfolioData.freeCapital
-          portfolio.allocatedCapital = portfolioData.allocatedCapital
-          portfolio.holdings = portfolioData.holdings
-          portfolio.updatedAt = new Date()
-          await portfolio.save()
-          
-          logger.info("Updated portfolio with fresh data", {
-            context: "Portfolio",
-            userId: sessionUser.id
-          })
+          try {
+            const portfolioData = await tradingProxy.getPortfolio(sessionUser.id)
+            
+            // Update the portfolio with fresh data
+            portfolio.totalValue = portfolioData.totalValue
+            portfolio.freeCapital = portfolioData.freeCapital
+            portfolio.allocatedCapital = portfolioData.allocatedCapital
+            portfolio.holdings = portfolioData.holdings
+            portfolio.updatedAt = new Date()
+            await portfolio.save()
+            
+            logger.info("Updated portfolio with fresh data", {
+              context: "Portfolio",
+              userId: sessionUser.id
+            })
+          } catch (error) {
+            logger.warn(`Failed to update portfolio data: ${error instanceof Error ? error.message : "Unknown error"}`, {
+              context: "Portfolio",
+              userId: sessionUser.id
+            })
+            // Continue with existing portfolio data
+          }
         }
       }
 

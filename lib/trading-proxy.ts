@@ -279,83 +279,51 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
   /**
    * Get portfolio data
    */
-// Update the getPortfolio method to properly calculate totalValue
-public async getPortfolio(userId: string | number): Promise<any> {
-  try {
-    console.log(`[DEBUG] Getting portfolio for user ${userId}`);
-    
-    // Get balances
-    const balances = await this.getBalances(userId);
-    console.log(`[DEBUG] Got ${balances.length} balances from exchange`);
-    console.log(`[DEBUG] Raw balances:`, JSON.stringify(balances));
-
-    // Filter out zero balances
-    const nonZeroBalances = balances.filter(balance => balance.total > 0);
-    console.log(`[DEBUG] Non-zero balances: ${nonZeroBalances.length}`, JSON.stringify(nonZeroBalances));
-    
- 
-    // Separate crypto holdings from stablecoins
-    const cryptoHoldings = nonZeroBalances.filter(
-      balance => !['USDT', 'USDC', 'BUSD', 'DAI'].includes(balance.asset)
-    );
-    const stablecoins = nonZeroBalances.filter(
-      balance => ['USDT', 'USDC', 'BUSD', 'DAI'].includes(balance.asset)
-    );
-
-    // Calculate stablecoin value (assuming 1:1 with USD)
-    const stablecoinValue = stablecoins.reduce((sum, coin) => sum + coin.total, 0);
-    
-    // Get current prices for all crypto assets
-    const holdings = await Promise.all(
-      cryptoHoldings.map(async (balance) => {
-        try {
-          const currentPrice = await this.getPrice(userId, `${balance.asset}USDT`);
-          const value = balance.total * currentPrice;
-
-          return {
-            token: balance.asset,
-            amount: balance.total,
-            averagePrice: balance.averagePrice || currentPrice,
-            currentPrice,
-            value,
-            pnl: balance.pnl || 0,
-            pnlPercentage: balance.pnlPercentage || 0,
-          };
-        } catch (error) {
-          logger.error(`Error processing holding for ${balance.asset}: ${error instanceof Error ? error.message : "Unknown error"}`);
-          return {
-            token: balance.asset,
-            amount: balance.total,
-            averagePrice: 0,
-            currentPrice: 0,
-            value: 0,
-            pnl: 0,
-            pnlPercentage: 0,
-          };
-        }
-      }),
-    );
-
-    // Calculate crypto value (sum of all non-stablecoin holdings)
-    const cryptoValue = holdings.reduce((sum, holding) => sum + holding.value, 0);
-    
-    // Calculate total portfolio value (crypto + stablecoins)
-    const totalValue = cryptoValue + stablecoinValue;
-    console.log(`[DEBUG] TOTAL PORTFOLIO VALUE: ${totalValue} (crypto: ${cryptoValue} + stablecoins: ${stablecoinValue})`);
-    
-    return {
-      totalValue,
-      freeCapital: stablecoins.reduce((sum, coin) => sum + coin.free, 0),
-      allocatedCapital: cryptoValue,
-      holdings,
-      realizedPnl: 0, // You might want to calculate this from trade history
-      unrealizedPnl: holdings.reduce((sum, holding) => sum + holding.pnl, 0)
-    };
-  } catch (error) {
-    logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : "Unknown error"}`);
-    throw error;
+  public async getPortfolio(userId: string | number): Promise<any> {
+    try {
+      console.log(`[DEBUG] Getting portfolio for user ${userId}`);
+      
+      const proxyServerUrl = process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://binance.yashvardhandhondge.tech';
+      const apiKey = process.env.TRADING_PROXY_API_KEY || '';
+      
+      const response = await fetch(`${proxyServerUrl}/api/user/${userId}/portfolio`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        signal: AbortSignal.timeout(this.defaultTimeout)
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: `HTTP error: ${response.status}` }));
+        throw new Error(error.message || 'Failed to fetch portfolio');
+      }
+      
+      const portfolioData = await response.json();
+      console.log(`[DEBUG] TOTAL PORTFOLIO VALUE: ${portfolioData.totalValue} (allocated: ${portfolioData.allocatedCapital} + free: ${portfolioData.freeCapital})`);
+      
+      return {
+        totalValue: portfolioData.totalValue,
+        freeCapital: portfolioData.freeCapital,
+        allocatedCapital: portfolioData.allocatedCapital,
+        holdings: portfolioData.holdings.map((holding: any) => ({
+          token: holding.symbol,
+          amount: holding.quantity,
+          averagePrice: holding.averagePrice || holding.price,
+          currentPrice: holding.price,
+          value: holding.value,
+          pnl: holding.pnl || 0,
+          pnlPercentage: holding.pnlPercentage || 0,
+        })),
+        realizedPnl: portfolioData.realizedPnl || 0,
+        unrealizedPnl: portfolioData.unrealizedPnl || 0
+      };
+    } catch (error) {
+      logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : "Unknown error"}`);
+      throw error;
+    }
   }
-}
 
   /**
    * Get open orders
