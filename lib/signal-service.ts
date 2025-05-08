@@ -78,7 +78,6 @@ class SignalService {
       localStorage.setItem('signalExpiryTimes', JSON.stringify(expiryTimes));
     } catch (error) {
       logger.error(`Error storing signal expiry times: ${error instanceof Error ? error.message : "Unknown error"}`);
-      // Non-critical error, so just log and continue
     }
   }
   
@@ -135,68 +134,53 @@ class SignalService {
   /**
    * Process signals to ensure they have IDs and proper timestamps
    */
-// In the processSignals method
-private processSignals(signals: any[]): Signal[] {
-  if (!signals || !Array.isArray(signals)) return [];
-  let storedExpiryTimes: Record<string, string> = {};
-
-  try {
-    // Get stored expiry times if available
-    const storedData = localStorage.getItem('signalExpiryTimes');
-    if (storedData) {
-      storedExpiryTimes = JSON.parse(storedData);
+  private processSignals(signals: any[]): Signal[] {
+    if (!signals || !Array.isArray(signals)) return [];
+    let storedExpiryTimes: Record<string, string> = {};
+  
+    try {
+      // Get stored expiry times if available
+      const storedData = localStorage.getItem('signalExpiryTimes');
+      if (storedData) {
+        storedExpiryTimes = JSON.parse(storedData);
+      }
+    } catch (error) {
+      logger.error(`Error reading stored expiry times: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
-  } catch (error) {
-    logger.error(`Error reading stored expiry times: ${error instanceof Error ? error.message : "Unknown error"}`);
+    
+    return signals.map((signal: any): Signal => {
+      // Ensure every signal has an ID
+      const id = signal.id || this.generateTemporaryId(signal);
+  
+      let expiresAt = signal.expiresAt;
+      if (storedExpiryTimes[id]) {
+        // Use stored expiry time if available
+        expiresAt = storedExpiryTimes[id];
+      } else if (!expiresAt || isNaN(new Date(expiresAt).getTime())) {
+        // Set expiration to 10 minutes after creation if invalid
+        const creationTime = signal.createdAt && !isNaN(new Date(signal.createdAt).getTime()) ?
+          new Date(signal.createdAt).getTime() : Date.now();
+        const expiry = new Date(creationTime + 10 * 60 * 1000);
+        expiresAt = expiry.toISOString();
+      }
+      
+      // Ensure createdAt has a valid date
+      let createdAt = signal.createdAt;
+      if (!createdAt || isNaN(new Date(createdAt).getTime())) {
+        createdAt = new Date().toISOString();
+      }
+      
+      return {
+        ...signal,
+        id,
+        createdAt,
+        expiresAt,
+        type: signal.type as "BUY" | "SELL",
+        riskLevel: signal.riskLevel as "low" | "medium" | "high"
+      };
+    });
   }
-  
-  return signals.map((signal: any): Signal => {
-    // Ensure every signal has an ID
-    const id = signal.id || this.generateTemporaryId(signal);
 
-    let expiresAt = signal.expiresAt;
-    if (storedExpiryTimes[id]) {
-      expiresAt = storedExpiryTimes[id];
-      logger.debug(`Using stored expiry time for signal ${id}`);
-    } else if (!expiresAt || isNaN(new Date(expiresAt).getTime())) {
-      // Set expiration to 10 minutes after creation if invalid
-      const creationTime = signal.createdAt && !isNaN(new Date(signal.createdAt).getTime()) ?
-        new Date(signal.createdAt).getTime() : Date.now();
-      const expiry = new Date(creationTime + 10 * 60 * 1000);
-      expiresAt = expiry.toISOString();
-    }
-    
-    // Ensure createdAt has a valid date
-    let createdAt = signal.createdAt;
-    if (!createdAt || isNaN(new Date(createdAt).getTime())) {
-      createdAt = new Date().toISOString();
-      logger.debug(`Fixed invalid createdAt for signal ${id}`);
-    }
-    
-    // Ensure expiresAt has a valid date
-
-    if (!expiresAt || isNaN(new Date(expiresAt).getTime())) {
-      // Set expiration to 10 minutes after creation
-      const expiry = new Date(new Date(createdAt).getTime() + 10 * 60 * 1000);
-      expiresAt = expiry.toISOString();
-      logger.debug(`Fixed invalid expiresAt for signal ${id}`);
-    }
-    
-    // Calculate if this is an old signal (more than 10 minutes since creation)
-    const isOldSignal = new Date().getTime() - new Date(createdAt).getTime() > 10 * 60 * 1000;
-    
-    return {
-      ...signal,
-      id,
-      createdAt,
-      expiresAt,
-      isOldSignal,
-      type: signal.type as "BUY" | "SELL",
-      riskLevel: signal.riskLevel as "low" | "medium" | "high"
-    };
-  });
-}
-  
   /**
    * Fetch signals from our API endpoint
    */

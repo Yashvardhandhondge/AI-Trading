@@ -5,6 +5,7 @@ import { connectToDatabase, models } from "@/lib/db"
 import { logger } from "@/lib/logger"
 import { tradingProxy } from "@/lib/trading-proxy"
 
+// app/api/cycles/active/route.ts - Improved syncPositionsFromExchange function
 async function syncPositionsFromExchange(user: any): Promise<void> {
   try {
     // Get portfolio from exchange

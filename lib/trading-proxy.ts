@@ -280,6 +280,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
    * Get portfolio data
    */
 // Update the getPortfolio method to properly calculate totalValue
+// lib/trading-proxy.ts - Updated getPortfolio method
 public async getPortfolio(userId: string | number): Promise<any> {
   try {
     // Get balances
@@ -303,24 +304,18 @@ public async getPortfolio(userId: string | number): Promise<any> {
           const currentPrice = await this.getPrice(userId, `${balance.asset}USDT`);
           const value = balance.total * currentPrice;
 
-          // For demo purposes, we'll use current price as average price with a small difference
-          // In a real app, this would come from trade history
-          const averagePrice = currentPrice * (0.9 + Math.random() * 0.2); // +/- 10%
-          const pnl = (currentPrice - averagePrice) * balance.total;
-          const pnlPercentage = ((currentPrice - averagePrice) / averagePrice) * 100;
-
           return {
             token: balance.asset,
             amount: balance.total,
-            averagePrice,
+            averagePrice: balance.averagePrice || currentPrice,
             currentPrice,
             value,
-            pnl,
-            pnlPercentage,
+            pnl: balance.pnl || 0,
+            pnlPercentage: balance.pnlPercentage || 0,
           };
         } catch (error) {
           // Handle errors for this specific asset
-          logger.error(`Error processing holding for ${balance.asset}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          logger.error(`Error processing holding for ${balance.asset}: ${error instanceof Error ? error.message : "Unknown error"}`);
           return {
             token: balance.asset,
             amount: balance.total,
@@ -334,34 +329,23 @@ public async getPortfolio(userId: string | number): Promise<any> {
       }),
     );
 
-    // Calculate crypto value
+    // Calculate crypto value (sum of all non-stablecoin holdings)
     const cryptoValue = holdings.reduce((sum, holding) => sum + holding.value, 0);
     
-    // Calculate stablecoin value
+    // Calculate stablecoin value (sum of all stablecoin balances)
     const stablecoinValue = stablecoins.reduce((sum, coin) => sum + coin.total, 0);
 
-    // Calculate total portfolio value (crypto + stablecoins)
+    // Calculate total portfolio value
     const totalValue = cryptoValue + stablecoinValue;
     
-    // Calculate free capital (only free stablecoins)
-    const freeCapital = stablecoins.reduce((sum, coin) => sum + coin.free, 0);
-
     return {
       totalValue,
-      freeCapital,
-      allocatedCapital: cryptoValue + (stablecoinValue - freeCapital), // Allocated includes locked stablecoins
-      realizedPnl: 0, // This would ideally come from trade history
-      unrealizedPnl: holdings.reduce((sum, holding) => sum + holding.pnl, 0),
+      freeCapital: stablecoins.reduce((sum, coin) => sum + coin.free, 0),
+      allocatedCapital: cryptoValue,
       holdings,
     };
   } catch (error) {
-    logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : 'Unknown error'}`);
-
-    // Return mock data for development or when the proxy fails
-    if (process.env.NODE_ENV === 'development' || process.env.USE_MOCK_DATA === 'true') {
-      return this.getMockPortfolio();
-    }
-
+    logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : "Unknown error"}`);
     throw error;
   }
 }

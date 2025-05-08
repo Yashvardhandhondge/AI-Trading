@@ -195,8 +195,7 @@ const handleAction = async (action: "accept" | "skip" | "accept-partial", percen
     }
   }
 
-  // Calculate how long ago the signal was received
-// Fix the getTimeSinceReceived function
+ // components/signal-card.tsx - Fix for getTimeSinceReceived function
 const getTimeSinceReceived = (): string => {
   try {
     // Make sure created date is valid
