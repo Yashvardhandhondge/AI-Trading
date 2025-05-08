@@ -282,12 +282,18 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
 // Update the getPortfolio method to properly calculate totalValue
 public async getPortfolio(userId: string | number): Promise<any> {
   try {
+    console.log(`[DEBUG] Getting portfolio for user ${userId}`);
+    
     // Get balances
     const balances = await this.getBalances(userId);
+    console.log(`[DEBUG] Got ${balances.length} balances from exchange`);
+    console.log(`[DEBUG] Raw balances:`, JSON.stringify(balances));
 
     // Filter out zero balances
     const nonZeroBalances = balances.filter(balance => balance.total > 0);
+    console.log(`[DEBUG] Non-zero balances: ${nonZeroBalances.length}`, JSON.stringify(nonZeroBalances));
     
+ 
     // Separate crypto holdings from stablecoins
     const cryptoHoldings = nonZeroBalances.filter(
       balance => !['USDT', 'USDC', 'BUSD', 'DAI'].includes(balance.asset)
@@ -335,6 +341,7 @@ public async getPortfolio(userId: string | number): Promise<any> {
     
     // Calculate total portfolio value (crypto + stablecoins)
     const totalValue = cryptoValue + stablecoinValue;
+    console.log(`[DEBUG] TOTAL PORTFOLIO VALUE: ${totalValue} (crypto: ${cryptoValue} + stablecoins: ${stablecoinValue})`);
     
     return {
       totalValue,
