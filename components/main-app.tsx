@@ -188,11 +188,11 @@ export function MainApp() {
             </button>
           ) : (
             <div className="flex items-center">
-              {isLoadingPortfolio ? (
-                <div className="text-sm text-muted-foreground animate-pulse">Loading...</div>
-              ) : portfolioValue !== null ? (
-                <div className="text-sm font-medium">{formatCurrency(portfolioValue)}</div>
-              ) : null}
+{isLoadingPortfolio ? (
+  <div className="text-sm text-muted-foreground animate-pulse">Loading...</div>
+) : portfolioValue !== null ? (
+  <div className="text-sm font-medium">{formatCurrency(portfolioValue)}</div>
+) : null}
             </div>
           )}
         </div>

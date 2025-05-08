@@ -5,6 +5,49 @@ import { connectToDatabase, models } from "@/lib/db"
 import { logger } from "@/lib/logger"
 import { tradingProxy } from "@/lib/trading-proxy"
 
+async function syncPositionsFromExchange(user: any): Promise<void> {
+  try {
+    // Get portfolio from exchange
+    const portfolioData = await tradingProxy.getPortfolio(user.telegramId);
+    
+    if (!portfolioData || !portfolioData.holdings) {
+      return;
+    }
+    
+    // For each holding that's not a stablecoin and has value
+    for (const holding of portfolioData.holdings) {
+      if (holding.amount > 0 && !['USDT', 'USDC', 'BUSD', 'DAI'].includes(holding.token)) {
+        // Check if we already have a cycle for this token
+        const existingCycle = await models.Cycle.findOne({
+          userId: user._id,
+          token: holding.token,
+          state: { $in: ["entry", "hold"] }
+        });
+        
+        if (!existingCycle) {
+          // Create a new cycle for this holding
+          await models.Cycle.create({
+            userId: user._id,
+            token: holding.token,
+            state: "hold",
+            entryPrice: holding.averagePrice || holding.currentPrice,
+            guidance: "Imported from exchange",
+            createdAt: new Date(),
+            updatedAt: new Date()
+          });
+          
+          logger.info(`Created cycle for existing ${holding.token} position for user ${user.telegramId}`, {
+            context: "PositionSync",
+            userId: user.telegramId
+          });
+        }
+      }
+    }
+  } catch (error) {
+    logger.error(`Error syncing positions: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const sessionUser = await getSessionUser()
@@ -28,12 +71,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Exchange not connected" }, { status: 400 })
     }
 
-    // Get active cycles
+    await syncPositionsFromExchange(user);
+
+    // Get active cycles (now including those synced from exchange)
     const cycles = await models.Cycle.find({
       userId: user._id,
       state: { $in: ["entry", "hold", "exit"] },
     }).sort({ updatedAt: -1 })
-
     // Get current prices for tokens in active cycles
     const enhancedCycles = []
     

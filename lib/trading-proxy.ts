@@ -279,81 +279,92 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
   /**
    * Get portfolio data
    */
-  public async getPortfolio(userId: string | number): Promise<any> {
-    try {
-      // Get balances
-      const balances = await this.getBalances(userId);
+// Update the getPortfolio method to properly calculate totalValue
+public async getPortfolio(userId: string | number): Promise<any> {
+  try {
+    // Get balances
+    const balances = await this.getBalances(userId);
 
-      // Filter out zero balances and stablecoins
-      const nonZeroBalances = balances.filter(
-        (balance) => balance.total > 0 && !['USDT', 'USDC', 'BUSD', 'DAI'].includes(balance.asset),
-      );
+    // Filter out zero balances
+    const nonZeroBalances = balances.filter(balance => balance.total > 0);
+    
+    // Separate crypto holdings from stablecoins
+    const cryptoHoldings = nonZeroBalances.filter(
+      balance => !['USDT', 'USDC', 'BUSD', 'DAI'].includes(balance.asset)
+    );
+    const stablecoins = nonZeroBalances.filter(
+      balance => ['USDT', 'USDC', 'BUSD', 'DAI'].includes(balance.asset)
+    );
 
-      // Get current prices for all assets
-      const holdings = await Promise.all(
-        nonZeroBalances.map(async (balance) => {
-          try {
-            const currentPrice = await this.getPrice(userId, `${balance.asset}USDT`);
-            const value = balance.total * currentPrice;
+    // Get current prices for all crypto assets
+    const holdings = await Promise.all(
+      cryptoHoldings.map(async (balance) => {
+        try {
+          const currentPrice = await this.getPrice(userId, `${balance.asset}USDT`);
+          const value = balance.total * currentPrice;
 
-            // For demo purposes, we'll use current price as average price with a small difference
-            // In a real app, this would come from trade history
-            const averagePrice = currentPrice * (0.9 + Math.random() * 0.2); // +/- 10%
-            const pnl = (currentPrice - averagePrice) * balance.total;
-            const pnlPercentage = ((currentPrice - averagePrice) / averagePrice) * 100;
+          // For demo purposes, we'll use current price as average price with a small difference
+          // In a real app, this would come from trade history
+          const averagePrice = currentPrice * (0.9 + Math.random() * 0.2); // +/- 10%
+          const pnl = (currentPrice - averagePrice) * balance.total;
+          const pnlPercentage = ((currentPrice - averagePrice) / averagePrice) * 100;
 
-            return {
-              token: balance.asset,
-              amount: balance.total,
-              averagePrice,
-              currentPrice,
-              value,
-              pnl,
-              pnlPercentage,
-            };
-          } catch (error) {
-            logger.error(`Error processing holding for ${balance.asset}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            
-            // Return a fallback entry with zero values for this asset
-            return {
-              token: balance.asset,
-              amount: balance.total,
-              averagePrice: 0,
-              currentPrice: 0,
-              value: 0,
-              pnl: 0,
-              pnlPercentage: 0,
-            };
-          }
-        }),
-      );
+          return {
+            token: balance.asset,
+            amount: balance.total,
+            averagePrice,
+            currentPrice,
+            value,
+            pnl,
+            pnlPercentage,
+          };
+        } catch (error) {
+          // Handle errors for this specific asset
+          logger.error(`Error processing holding for ${balance.asset}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          return {
+            token: balance.asset,
+            amount: balance.total,
+            averagePrice: 0,
+            currentPrice: 0,
+            value: 0,
+            pnl: 0,
+            pnlPercentage: 0,
+          };
+        }
+      }),
+    );
 
-      // Calculate portfolio totals
-      const totalValue = holdings.reduce((sum, holding) => sum + holding.value, 0);
+    // Calculate crypto value
+    const cryptoValue = holdings.reduce((sum, holding) => sum + holding.value, 0);
+    
+    // Calculate stablecoin value
+    const stablecoinValue = stablecoins.reduce((sum, coin) => sum + coin.total, 0);
 
-      // Get stablecoin balances for free capital
-      const stablecoins = balances.filter((balance) => ['USDT', 'USDC', 'BUSD', 'DAI'].includes(balance.asset));
-      const freeCapital = stablecoins.reduce((sum, coin) => sum + coin.free, 0);
+    // Calculate total portfolio value (crypto + stablecoins)
+    const totalValue = cryptoValue + stablecoinValue;
+    
+    // Calculate free capital (only free stablecoins)
+    const freeCapital = stablecoins.reduce((sum, coin) => sum + coin.free, 0);
 
-      return {
-        totalValue: totalValue + freeCapital,
-        freeCapital,
-        allocatedCapital: totalValue,
-        realizedPnl: 0, // This would ideally come from trade history
-        unrealizedPnl: holdings.reduce((sum, holding) => sum + holding.pnl, 0),
-        holdings,
-      };
-    } catch (error) {
-      logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return {
+      totalValue,
+      freeCapital,
+      allocatedCapital: cryptoValue + (stablecoinValue - freeCapital), // Allocated includes locked stablecoins
+      realizedPnl: 0, // This would ideally come from trade history
+      unrealizedPnl: holdings.reduce((sum, holding) => sum + holding.pnl, 0),
+      holdings,
+    };
+  } catch (error) {
+    logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : 'Unknown error'}`);
 
-      // Return mock data for development or when the proxy fails
-      if (process.env.NODE_ENV === 'development' || process.env.USE_MOCK_DATA === 'true') {
-        return this.getMockPortfolio();
-      }
-
-      throw error;
+    // Return mock data for development or when the proxy fails
+    if (process.env.NODE_ENV === 'development' || process.env.USE_MOCK_DATA === 'true') {
+      return this.getMockPortfolio();
     }
+
+    throw error;
   }
+}
 
   /**
    * Get open orders

@@ -59,6 +59,30 @@ class SignalService {
     return `temp_${idBase}_${Date.now()}`;
   }
 
+  private storeSignalExpiryTimes(signals: Signal[]): void {
+    try {
+      // Get existing stored expiry times
+      const storedExpiryTimes = localStorage.getItem('signalExpiryTimes');
+      const expiryTimes: Record<string, string> = storedExpiryTimes ? 
+        JSON.parse(storedExpiryTimes) : {};
+      
+      // Update with new signals
+      signals.forEach(signal => {
+        // Only store if we don't already have this signal's expiry time
+        if (!expiryTimes[signal.id]) {
+          expiryTimes[signal.id] = signal.expiresAt;
+        }
+      });
+      
+      // Save back to localStorage
+      localStorage.setItem('signalExpiryTimes', JSON.stringify(expiryTimes));
+    } catch (error) {
+      logger.error(`Error storing signal expiry times: ${error instanceof Error ? error.message : "Unknown error"}`);
+      // Non-critical error, so just log and continue
+    }
+  }
+  
+
   /**
    * Get signals from the API, with retries and fallbacks
    */
@@ -70,12 +94,14 @@ class SignalService {
       // Ensure all signals have an ID and created/expiry times are properly formatted
       const validatedSignals = this.processSignals(signals);
       
+      // Store expiry times in localStorage for persistence
+      this.storeSignalExpiryTimes(validatedSignals);
+      
       // If we got signals from the API, return them
       if (validatedSignals && validatedSignals.length > 0) {
         this.cachedSignals = validatedSignals;
         return validatedSignals;
       }
-      
       // If no signals from API, try Ekin API directly if it's been more than 5 minutes
       // since our last update or if we have no cached signals
       if (Date.now() - this.lastEkinUpdate > this.ekinUpdateInterval || this.cachedSignals.length === 0) {
@@ -109,41 +135,67 @@ class SignalService {
   /**
    * Process signals to ensure they have IDs and proper timestamps
    */
-  private processSignals(signals: any[]): Signal[] {
-    if (!signals || !Array.isArray(signals)) return [];
-    
-    return signals.map((signal: any): Signal => {
-      // Ensure every signal has an ID
-      const id = signal.id || this.generateTemporaryId(signal);
-      
-      // Ensure createdAt has a valid date
-      let createdAt = signal.createdAt;
-      if (!createdAt || isNaN(new Date(createdAt).getTime())) {
-        createdAt = new Date().toISOString();
-      }
-      
-      // Ensure expiresAt has a valid date
-      let expiresAt = signal.expiresAt;
-      if (!expiresAt || isNaN(new Date(expiresAt).getTime())) {
-        // Set expiration to 10 minutes after creation
-        const expiry = new Date(new Date(createdAt).getTime() + 10 * 60 * 1000);
-        expiresAt = expiry.toISOString();
-      }
-      
-      // Calculate if this is an old signal (more than 10 minutes since creation)
-      const isOldSignal = new Date().getTime() - new Date(createdAt).getTime() > 10 * 60 * 1000;
-      
-      return {
-        ...signal,
-        id,
-        createdAt,
-        expiresAt,
-        isOldSignal,
-        type: signal.type as "BUY" | "SELL",
-        riskLevel: signal.riskLevel as "low" | "medium" | "high"
-      };
-    });
+// In the processSignals method
+private processSignals(signals: any[]): Signal[] {
+  if (!signals || !Array.isArray(signals)) return [];
+  let storedExpiryTimes: Record<string, string> = {};
+
+  try {
+    // Get stored expiry times if available
+    const storedData = localStorage.getItem('signalExpiryTimes');
+    if (storedData) {
+      storedExpiryTimes = JSON.parse(storedData);
+    }
+  } catch (error) {
+    logger.error(`Error reading stored expiry times: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
+  
+  return signals.map((signal: any): Signal => {
+    // Ensure every signal has an ID
+    const id = signal.id || this.generateTemporaryId(signal);
+
+    let expiresAt = signal.expiresAt;
+    if (storedExpiryTimes[id]) {
+      expiresAt = storedExpiryTimes[id];
+      logger.debug(`Using stored expiry time for signal ${id}`);
+    } else if (!expiresAt || isNaN(new Date(expiresAt).getTime())) {
+      // Set expiration to 10 minutes after creation if invalid
+      const creationTime = signal.createdAt && !isNaN(new Date(signal.createdAt).getTime()) ?
+        new Date(signal.createdAt).getTime() : Date.now();
+      const expiry = new Date(creationTime + 10 * 60 * 1000);
+      expiresAt = expiry.toISOString();
+    }
+    
+    // Ensure createdAt has a valid date
+    let createdAt = signal.createdAt;
+    if (!createdAt || isNaN(new Date(createdAt).getTime())) {
+      createdAt = new Date().toISOString();
+      logger.debug(`Fixed invalid createdAt for signal ${id}`);
+    }
+    
+    // Ensure expiresAt has a valid date
+
+    if (!expiresAt || isNaN(new Date(expiresAt).getTime())) {
+      // Set expiration to 10 minutes after creation
+      const expiry = new Date(new Date(createdAt).getTime() + 10 * 60 * 1000);
+      expiresAt = expiry.toISOString();
+      logger.debug(`Fixed invalid expiresAt for signal ${id}`);
+    }
+    
+    // Calculate if this is an old signal (more than 10 minutes since creation)
+    const isOldSignal = new Date().getTime() - new Date(createdAt).getTime() > 10 * 60 * 1000;
+    
+    return {
+      ...signal,
+      id,
+      createdAt,
+      expiresAt,
+      isOldSignal,
+      type: signal.type as "BUY" | "SELL",
+      riskLevel: signal.riskLevel as "low" | "medium" | "high"
+    };
+  });
+}
   
   /**
    * Fetch signals from our API endpoint

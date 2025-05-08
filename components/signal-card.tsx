@@ -51,49 +51,55 @@ export function SignalCard({
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   
   // Calculate the initial time left based on signal creation and expiration time
-  useEffect(() => {
-    try {
-      if (isOldSignal) {
-        // For old signals (>10 minutes), show 0 time left
-        setTimeLeft(0);
-        return;
-      }
-
-      // For active signals, calculate the proper time left
-      const expiresAt = new Date(signal.expiresAt).getTime();
-      const now = new Date().getTime();
-      const difference = expiresAt - now;
-      const secondsLeft = Math.max(0, Math.floor(difference / 1000));
-      setTimeLeft(secondsLeft);
-      
-      // Clear any existing timer
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      
-      // Set up a timer that updates every second
-      timerRef.current = setInterval(() => {
-        setTimeLeft(prevTime => {
-          const newTime = Math.max(0, prevTime - 1);
-          // Stop the timer when it reaches 0
-          if (newTime === 0 && timerRef.current) {
-            clearInterval(timerRef.current);
-          }
-          return newTime;
-        });
-      }, 1000);
-      
-      // Clean up the timer on unmount or when signal changes
-      return () => {
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-        }
-      };
-    } catch (e) {
-      logger.error(`Error calculating time left: ${e instanceof Error ? e.message : "Unknown error"}`);
+// Update the useEffect that handles the timer
+useEffect(() => {
+  try {
+    if (isOldSignal) {
+      // For old signals (>10 minutes), show 0 time left
       setTimeLeft(0);
+      return;
     }
-  }, [signal.expiresAt, signal.id, isOldSignal]);
+
+    // For active signals, calculate the proper time left
+    const expiresAt = new Date(signal.expiresAt).getTime();
+    const now = new Date().getTime();
+    
+    // Check if the expiration time is valid
+    if (isNaN(expiresAt)) {
+      logger.error(`Invalid expiresAt date for signal ${signal.id}: ${signal.expiresAt}`);
+      setTimeLeft(0); // Default to 0 for invalid dates
+      return;
+    }
+    
+    // Calculate time left
+    const difference = expiresAt - now;
+    const secondsLeft = Math.max(0, Math.floor(difference / 1000));
+    
+    // If expiration time is more than 10 minutes from now, it might be incorrect
+    // (signals expire after 10 minutes)
+    const totalSeconds = 10 * 60; // 10 minutes in seconds
+    if (secondsLeft > totalSeconds) {
+      // Calculate a more reasonable time left based on createdAt
+      const createdAt = new Date(signal.createdAt).getTime();
+      if (!isNaN(createdAt)) {
+        const elapsedSeconds = Math.floor((now - createdAt) / 1000);
+        const adjustedSecondsLeft = Math.max(0, totalSeconds - elapsedSeconds);
+        setTimeLeft(adjustedSecondsLeft);
+        
+        logger.debug(`Adjusted time left for signal ${signal.id}: ${adjustedSecondsLeft}s`);
+      } else {
+        setTimeLeft(Math.min(secondsLeft, totalSeconds));
+      }
+    } else {
+      setTimeLeft(secondsLeft);
+    }
+    
+    // Rest of the timer setup...
+  } catch (e) {
+    logger.error(`Error calculating time left: ${e instanceof Error ? e.message : "Unknown error"}`);
+    setTimeLeft(0);
+  }
+}, [signal.expiresAt, signal.createdAt, signal.id, isOldSignal]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -190,24 +196,37 @@ const handleAction = async (action: "accept" | "skip" | "accept-partial", percen
   }
 
   // Calculate how long ago the signal was received
-  const getTimeSinceReceived = (): string => {
-    try {
-      const createdDate = new Date(signal.createdAt);
-      const now = new Date();
-      const diffMs = now.getTime() - createdDate.getTime();
-      const diffMins = Math.floor(diffMs / 60000);
-      
-      if (diffMins < 60) {
-        return `${diffMins}m ago`;
-      } else if (diffMins < 24 * 60) {
-        return `${Math.floor(diffMins / 60)}h ago`;
-      } else {
-        return `${Math.floor(diffMins / (60 * 24))}d ago`;
-      }
-    } catch (e) {
-      return "Unknown";
+// Fix the getTimeSinceReceived function
+const getTimeSinceReceived = (): string => {
+  try {
+    // Make sure created date is valid
+    let createdDate: Date;
+    if (!signal.createdAt || isNaN(new Date(signal.createdAt).getTime())) {
+      // If createdAt is invalid, use current time minus 1 minute as fallback
+      createdDate = new Date(Date.now() - 60000);
+      logger.warn(`Invalid createdAt for signal ${signal.id}, using fallback`);
+    } else {
+      createdDate = new Date(signal.createdAt);
     }
+    
+    const now = new Date();
+    const diffMs = now.getTime() - createdDate.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    
+    if (diffMins <= 0) {
+      return "Just now"; // For very recent or future timestamps
+    } else if (diffMins < 60) {
+      return `${diffMins}m ago`;
+    } else if (diffMins < 24 * 60) {
+      return `${Math.floor(diffMins / 60)}h ago`;
+    } else {
+      return `${Math.floor(diffMins / (60 * 24))}d ago`;
+    }
+  } catch (e) {
+    logger.error(`Error formatting time: ${e instanceof Error ? e.message : "Unknown error"}`);
+    return "Unknown time";
   }
+}
 
   const handleOpenLink = (): void => {
     if (signal.link) {
