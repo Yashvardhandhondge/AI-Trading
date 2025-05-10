@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { useRouter } from "next/navigation"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -18,9 +17,10 @@ import { SignalCard } from "@/components/signal-card"
 interface DashboardProps {
   user: SessionUser;
   onExchangeStatusChange?: () => void;
+  onSwitchToSettings?: () => void; // New prop for switching to settings tab
 }
 
-export function Dashboard({ user, onExchangeStatusChange }: DashboardProps) {
+export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: DashboardProps) {
   const [signals, setSignals] = useState<Signal[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [userHoldings, setUserHoldings] = useState<Record<string, number>>({})
@@ -31,7 +31,6 @@ export function Dashboard({ user, onExchangeStatusChange }: DashboardProps) {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [refreshing, setRefreshing] = useState(false)
   const [lastSignalCheckTime, setLastSignalCheckTime] = useState<number>(Date.now())
-  const router = useRouter()
   const [notifiedSignalIds, setNotifiedSignalIds] = useState<Set<string>>(new Set());
 
   // Fetch active signals - wrapped in useCallback to be reusable
@@ -164,9 +163,11 @@ export function Dashboard({ user, onExchangeStatusChange }: DashboardProps) {
     fetchSignals(false)
   }
   
-  // Handle settings click - This is now working correctly
+  // Handle settings click - Now changes the active tab instead of using router
   const handleSettingsClick = () => {
-    router.push('/settings');
+    if (onSwitchToSettings) {
+      onSwitchToSettings();
+    }
   }
   
   // Check for new signals periodically
@@ -432,7 +433,7 @@ export function Dashboard({ user, onExchangeStatusChange }: DashboardProps) {
               <Loader2 className="h-5 w-5 animate-spin" />
             </Button>
             
-            {/* Settings button - now works correctly */}
+            {/* Settings button - now switches to settings tab */}
             <Button 
               variant="ghost" 
               size="icon" 
@@ -465,7 +466,7 @@ export function Dashboard({ user, onExchangeStatusChange }: DashboardProps) {
             <RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} />
           </Button>
           
-          {/* Settings button - now works correctly */}
+          {/* Settings button - now switches to settings tab */}
           <Button 
             variant="ghost" 
             size="icon" 

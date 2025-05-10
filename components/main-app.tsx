@@ -135,6 +135,11 @@ export function MainApp() {
     setActiveTab(value)
   }
 
+  // Handle switching to settings tab from any component
+  const handleSwitchToSettings = () => {
+    setActiveTab("settings")
+  }
+
   // Refresh user data (useful after connecting exchange)
   const refreshUserData = async () => {
     try {
@@ -188,11 +193,11 @@ export function MainApp() {
             </button>
           ) : (
             <div className="flex items-center">
-{isLoadingPortfolio ? (
-  <div className="text-sm text-muted-foreground animate-pulse">Loading...</div>
-) : portfolioValue !== null ? (
-  <div className="text-sm font-medium">{formatCurrency(portfolioValue)}</div>
-) : null}
+              {isLoadingPortfolio ? (
+                <div className="text-sm text-muted-foreground animate-pulse">Loading...</div>
+              ) : portfolioValue !== null ? (
+                <div className="text-sm font-medium">{formatCurrency(portfolioValue)}</div>
+              ) : null}
             </div>
           )}
         </div>
@@ -202,7 +207,11 @@ export function MainApp() {
         
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full flex-1 flex flex-col">
           <TabsContent value="trades" className="flex-1 p-0">
-            <Dashboard user={user} onExchangeStatusChange={refreshUserData} />
+            <Dashboard 
+              user={user}
+              onExchangeStatusChange={refreshUserData}
+              onSwitchToSettings={handleSwitchToSettings} // Pass the handler to switch tabs
+            />
           </TabsContent>
           
           <TabsContent value="leaders" className="flex-1 p-0">
