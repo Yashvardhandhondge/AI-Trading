@@ -9,141 +9,75 @@ import { formatCurrency } from "@/lib/utils"
 import { logger } from "@/lib/logger"
 import type { SessionUser } from "@/lib/auth"
 import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
+import PortfolioChart from "./PortfolioChart"
+import PortfolioPositions from "./PortfolioPositions"
 
 interface ProfitLossViewProps {
   user: SessionUser
 }
 
-interface Position {
-  token: string
-  entryPrice: number
-  currentPrice: number
-  quantity: number
-  pnl: number
-  pnlPercentage: number
-}
-
-interface Trade {
-  id: string
-  token: string
-  type: "BUY" | "SELL"
-  entryPrice: number
-  exitPrice: number
-  quantity: number
-  pnl: number
-  timestamp: string
-}
-
 export function ProfitLossView({ user }: ProfitLossViewProps) {
   const [isLoading, setIsLoading] = useState(true)
-  const [positions, setPositions] = useState<Position[]>([])
-  const [trades, setTrades] = useState<Trade[]>([])
-  const [totalPnl, setTotalPnl] = useState<number>(0)
-  const [pnlPercentage, setPnlPercentage] = useState<number>(0)
+  const [portfolioData, setPortfolioData] = useState<any>(null)
+  const [activeTab, setActiveTab] = useState("positions")
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
+  const [isRefreshing, setIsRefreshing] = useState(false)
   
   // Fetch portfolio data - using useCallback to be able to call it from multiple places
-  const fetchData = useCallback(async () => {
+  const fetchPortfolioData = useCallback(async (showLoadingState = true) => {
     try {
-      setIsLoading(true)
+      if (showLoadingState) {
+        setIsLoading(true)
+      } else {
+        setIsRefreshing(true)
+      }
+      
       setError(null)
       
       if (!user.exchangeConnected) {
         setIsLoading(false)
+        setIsRefreshing(false)
         return
       }
       
-      // Fetch active positions (cycles in progress)
-      const cyclesResponse = await fetch("/api/cycles/active")
+      // Fetch portfolio summary
+      const response = await fetch('/api/portfolio/summary')
       
-      if (cyclesResponse.ok) {
-        const cyclesData = await cyclesResponse.json()
-        
-        // Transform cycles data into positions
-        if (cyclesData.cycles) {
-          const positionData = cyclesData.cycles.map((cycle: any) => ({
-            token: cycle.token,
-            entryPrice: cycle.entryPrice,
-            currentPrice: cycle.currentPrice || cycle.entryPrice * 1.1, // Default to +10% if no current price
-            quantity: cycle.quantity || 0.4, // Default to 0.4 if not specified
-            pnl: cycle.pnl || ((cycle.currentPrice || cycle.entryPrice * 1.1) - cycle.entryPrice) * (cycle.quantity || 0.4),
-            pnlPercentage: cycle.pnlPercentage || (((cycle.currentPrice || cycle.entryPrice * 1.1) - cycle.entryPrice) / cycle.entryPrice * 100)
-          }))
-          
-          setPositions(positionData)
-          
-          // Calculate total PnL
-          const total = positionData.reduce((sum:any, pos:any) => sum + pos.pnl, 0)
-          setTotalPnl(total)
-          
-          // Approximate percentage based on position values
-          const totalValue = positionData.reduce((sum:any, pos:any) => sum + (pos.currentPrice * pos.quantity), 0)
-          setPnlPercentage(totalValue > 0 ? (total / (totalValue - total) * 100) : 0)
-        }
+      if (!response.ok) {
+        throw new Error(`Failed to fetch portfolio summary: ${response.status}`)
       }
       
-      // Fetch recent trades
-      const tradesResponse = await fetch("/api/users/" + user.id + "/trades")
-      
-      if (tradesResponse.ok) {
-        const tradesData = await tradesResponse.json()
-        
-        if (tradesData.trades) {
-          setTrades(tradesData.trades.map((trade: any) => ({
-            id: trade.id,
-            token: trade.token,
-            type: trade.type,
-            entryPrice: trade.entryPrice || 6400, // Default values to match the design
-            exitPrice: trade.exitPrice || 9600,
-            quantity: trade.amount || 0.4,
-            pnl: trade.pnl || 2150,
-            timestamp: trade.timestamp || trade.createdAt
-          })))
-        }
-      }
-      
-      // Update last fetched timestamp
+      const data = await response.json()
+      setPortfolioData(data)
       setLastUpdated(new Date())
+      
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load portfolio data")
-      logger.error(`Error fetching portfolio data: ${err instanceof Error ? err.message : "Unknown error"}`)
+      const errorMessage = err instanceof Error ? err.message : "Failed to load portfolio data"
+      setError(errorMessage)
+      logger.error(`Error fetching portfolio data: ${errorMessage}`)
     } finally {
       setIsLoading(false)
+      setIsRefreshing(false)
     }
-  }, [user.id, user.exchangeConnected])
+  }, [user.exchangeConnected])
   
   // Initial data load and periodic refresh
   useEffect(() => {
-    fetchData()
+    fetchPortfolioData()
     
     // Set up polling to refresh data every 30 seconds
     const refreshInterval = setInterval(() => {
-      fetchData()
+      fetchPortfolioData(false)
     }, 30000)
     
     // Clean up the interval when component unmounts
     return () => clearInterval(refreshInterval)
-  }, [fetchData])
+  }, [fetchPortfolioData])
   
   // Handle manual refresh
   const handleRefresh = () => {
-    fetchData()
-  }
-  
-  // Format date for display
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
-    return `${date.getFullYear()}/${('0' + (date.getMonth() + 1)).slice(-2)}/${('0' + date.getDate()).slice(-2)} ${('0' + date.getHours()).slice(-2)}:${('0' + date.getMinutes()).slice(-2)} PM`
-  }
-  
-  if (isLoading && positions.length === 0 && trades.length === 0) {
-    return (
-      <div className="flex justify-center items-center p-8">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <span className="ml-2">Loading portfolio data...</span>
-      </div>
-    )
+    fetchPortfolioData(false)
   }
   
   if (!user.exchangeConnected) {
@@ -160,20 +94,18 @@ export function ProfitLossView({ user }: ProfitLossViewProps) {
     )
   }
   
-  // Dummy data for the chart - in a real implementation, this would come from API
-  const chartData = [
-    { time: '1', value: 100 },
-    { time: '2', value: 120 },
-    { time: '3', value: 110 },
-    { time: '4', value: 140 },
-    { time: '5', value: 130 },
-    { time: '6', value: 150 },
-    { time: '7', value: 140 },
-    { time: '8', value: 170 },
-    { time: '9', value: 180 },
-    { time: '10', value: 160 }
-  ]
-  
+  if (isLoading && !portfolioData) {
+    return (
+      <div className="container mx-auto p-4 pb-20">
+        <h2 className="text-xl font-bold mb-4">Profit & Loss</h2>
+        <div className="flex justify-center items-center p-8">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <span className="ml-2">Loading portfolio data...</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="container mx-auto p-4 pb-20">
       <div className="flex justify-between items-center mb-4">
@@ -184,12 +116,19 @@ export function ProfitLossView({ user }: ProfitLossViewProps) {
             variant="ghost" 
             onClick={handleRefresh} 
             className="h-8 px-2"
-            disabled={isLoading}
+            disabled={isRefreshing}
           >
-            <RefreshCw className={`h-4 w-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
-            {isLoading ? 'Updating...' : 'Refresh'}
+            <RefreshCw className={`h-4 w-4 mr-1 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Updating...' : 'Refresh'}
           </Button>
-          <div className="text-xl font-bold text-green-500">+{pnlPercentage.toFixed(0)}%</div>
+          {portfolioData && portfolioData.totalValue && (
+            <div className="text-xl font-bold">
+              <span className={portfolioData.unrealizedPnl >= 0 ? "text-green-500" : "text-red-500"}>
+                {portfolioData.unrealizedPnl >= 0 ? "+" : ""}
+                {formatCurrency(portfolioData.unrealizedPnl || 0)}
+              </span>
+            </div>
+          )}
         </div>
       </div>
       
@@ -204,129 +143,169 @@ export function ProfitLossView({ user }: ProfitLossViewProps) {
         Last updated: {lastUpdated.toLocaleTimeString()}
       </div>
       
-      {/* P&L Chart - Simplified representation */}
+      {/* Portfolio Summary Card */}
       <Card className="mb-6">
-        <CardContent className="p-4">
-          <div className="h-48 w-full bg-gray-50 flex items-center justify-center relative">
-            {/* Using a simplified visualization for the chart */}
-            <div className="relative w-full h-full">
-              <svg width="100%" height="100%" viewBox="0 0 100 50" preserveAspectRatio="none">
-                <path
-                  d={`M0,${50-chartData[0].value/4} ${chartData.map((point, i) => `L${i*10},${50-point.value/4}`).join(' ')}`}
-                  fill="none"
-                  stroke="#3b82f6"
-                  strokeWidth="2"
-                />
-                <path
-                  d={`M0,${50-chartData[0].value/4} ${chartData.map((point, i) => `L${i*10},${50-point.value/4}`).join(' ')} L${(chartData.length-1)*10},50 L0,50 Z`}
-                  fill="rgba(59, 130, 246, 0.1)"
-                />
-              </svg>
+        <CardHeader className="pb-2">
+          <CardTitle>Portfolio Summary</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">Total Value</p>
+              <p className="text-2xl font-bold">{formatCurrency(portfolioData?.totalValue || 0)}</p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">Unrealized P&L</p>
+              <p className={`text-2xl font-bold flex items-center ${(portfolioData?.unrealizedPnl || 0) >= 0 ? "text-green-500" : "text-red-500"}`}>
+                {(portfolioData?.unrealizedPnl || 0) >= 0 ? (
+                  <TrendingUp className="h-5 w-5 mr-1" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 mr-1" />
+                )}
+                {formatCurrency(portfolioData?.unrealizedPnl || 0)}
+              </p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">Realized P&L</p>
+              <p className={`text-2xl font-bold ${(portfolioData?.realizedPnl || 0) >= 0 ? "text-green-500" : "text-red-500"}`}>
+                {formatCurrency(portfolioData?.realizedPnl || 0)}
+              </p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">Total P&L</p>
+              <p className={`text-2xl font-bold ${((portfolioData?.realizedPnl || 0) + (portfolioData?.unrealizedPnl || 0)) >= 0 ? "text-green-500" : "text-red-500"}`}>
+                {formatCurrency((portfolioData?.realizedPnl || 0) + (portfolioData?.unrealizedPnl || 0))}
+              </p>
             </div>
           </div>
         </CardContent>
       </Card>
       
-      {/* Positions Table */}
-      <div className="mb-2">
-        <div className="flex justify-between items-center">
-          <h3 className="font-medium">Positions</h3>
-          <span className="text-sm text-muted-foreground">{positions.length}</span>
-        </div>
-      </div>
-      
-      <Card className="mb-6 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="py-3 px-4 text-left text-sm font-medium">Token</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">Entry Price</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">Current Price</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">Qty</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">PnL</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {positions.length > 0 ? (
-                positions.map((position, index) => (
-                  <tr key={index}>
-                    <td className="py-3 px-4 text-sm">{position.token}</td>
-                    <td className="py-3 px-4 text-sm">${position.entryPrice.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-sm">${position.currentPrice.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-sm">{position.quantity.toFixed(1)}</td>
-                    <td className="py-3 px-4 text-sm text-green-500">
-                      ${position.pnl.toLocaleString()} ({position.pnlPercentage.toFixed(0)}%)
-                    </td>
-                    <td className="py-3 px-4 text-sm">
-                      <div className="flex gap-1">
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs">Sell 50%</Button>
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs">Sell All</Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="py-4 text-center text-muted-foreground">
-                    No active positions
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      {/* Portfolio Chart */}
+      <Card className="mb-6">
+        <CardHeader className="pb-2">
+          <CardTitle>Portfolio Positions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <PortfolioChart userId={user.id} />
+        </CardContent>
       </Card>
       
-      {/* Last Trades */}
-      <div className="mb-2">
-        <div className="flex justify-between items-center">
-          <h3 className="font-medium">Last Trades</h3>
-          <span className="text-sm text-muted-foreground">4,156</span>
-        </div>
-      </div>
+      {/* Positions Table Component */}
+      <PortfolioPositions userId={user.id} />
       
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="py-3 px-4 text-left text-sm font-medium">Token</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">Entry Price</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">Exit Price</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">Qty</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">PnL</th>
-                <th className="py-3 px-4 text-left text-sm font-medium">Time</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {trades.length > 0 ? (
-                trades.map((trade) => (
-                  <tr key={trade.id}>
-                    <td className="py-3 px-4 text-sm">{trade.token}</td>
-                    <td className="py-3 px-4 text-sm">${trade.entryPrice.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-sm">${trade.exitPrice.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-sm">{trade.quantity.toFixed(1)}</td>
-                    <td className="py-3 px-4 text-sm text-green-500">
-                      ${trade.pnl.toLocaleString()}
-                    </td>
-                    <td className="py-3 px-4 text-sm">
-                      {formatDate(trade.timestamp)}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="py-4 text-center text-muted-foreground">
-                    No recent trades
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {/* Tabs for different views */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-6">
+        <TabsList className="grid w-full grid-cols-2 mb-4">
+          <TabsTrigger value="positions">Positions</TabsTrigger>
+          <TabsTrigger value="trades">Recent Trades</TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="positions">
+          {/* Position-specific content is now in the PortfolioPositions component above */}
+        </TabsContent>
+        
+        <TabsContent value="trades">
+          <Card className="overflow-hidden">
+            <CardHeader className="pb-2">
+              <CardTitle>Recent Trades</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <TradesTable userId={user.id} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+// Component for displaying recent trades
+function TradesTable({ userId }: { userId: number | string }) {
+  const [trades, setTrades] = useState<any[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  
+  useEffect(() => {
+    const fetchTrades = async () => {
+      try {
+        setIsLoading(true)
+        
+        const response = await fetch(`/api/users/${userId}/trades`)
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch trades: ${response.status}`)
+        }
+        
+        const data = await response.json()
+        setTrades(data.trades || [])
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Failed to load trades"
+        setError(errorMessage)
+        logger.error(`Error fetching trades: ${errorMessage}`)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    
+    fetchTrades()
+  }, [userId])
+  
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center p-8">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        <span className="ml-2">Loading trades...</span>
+      </div>
+    )
+  }
+  
+  if (error) {
+    return (
+      <div className="p-4 text-red-500">
+        Error: {error}
+      </div>
+    )
+  }
+  
+  if (trades.length === 0) {
+    return (
+      <div className="p-6 text-center text-muted-foreground">
+        No recent trades found
+      </div>
+    )
+  }
+  
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead className="bg-muted/50">
+          <tr>
+            <th className="py-3 px-4 text-left text-sm font-medium">Token</th>
+            <th className="py-3 px-4 text-left text-sm font-medium">Type</th>
+            <th className="py-3 px-4 text-left text-sm font-medium">Price</th>
+            <th className="py-3 px-4 text-left text-sm font-medium">Amount</th>
+            <th className="py-3 px-4 text-left text-sm font-medium">Time</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {trades.map((trade) => (
+            <tr key={trade.id}>
+              <td className="py-3 px-4 text-sm">{trade.token}</td>
+              <td className="py-3 px-4 text-sm">
+                <span className={trade.type === "BUY" ? "text-green-500" : "text-red-500"}>
+                  {trade.type}
+                </span>
+              </td>
+              <td className="py-3 px-4 text-sm">{formatCurrency(trade.price)}</td>
+              <td className="py-3 px-4 text-sm">{trade.amount.toFixed(6)}</td>
+              <td className="py-3 px-4 text-sm">
+                {new Date(trade.timestamp).toLocaleString()}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
