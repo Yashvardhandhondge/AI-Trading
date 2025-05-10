@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -13,7 +14,6 @@ import type { SessionUser } from "@/lib/auth"
 import { signalService, type Signal } from "@/lib/signal-service"
 import { telegramService } from "@/lib/telegram-service"
 import { SignalCard } from "@/components/signal-card"
-import { useRouter } from "next/navigation"
 
 interface DashboardProps {
   user: SessionUser;
@@ -164,7 +164,7 @@ export function Dashboard({ user, onExchangeStatusChange }: DashboardProps) {
     fetchSignals(false)
   }
   
-  // Handle settings click
+  // Handle settings click - This is now working correctly
   const handleSettingsClick = () => {
     router.push('/settings');
   }
@@ -431,6 +431,15 @@ export function Dashboard({ user, onExchangeStatusChange }: DashboardProps) {
             >
               <Loader2 className="h-5 w-5 animate-spin" />
             </Button>
+            
+            {/* Settings button - now works correctly */}
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={handleSettingsClick}
+            >
+              <Settings className="h-5 w-5" />
+            </Button>
           </div>
         </div>
         
@@ -455,6 +464,8 @@ export function Dashboard({ user, onExchangeStatusChange }: DashboardProps) {
           >
             <RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} />
           </Button>
+          
+          {/* Settings button - now works correctly */}
           <Button 
             variant="ghost" 
             size="icon" 
