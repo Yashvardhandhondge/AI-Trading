@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
 
             if (signal.type === "BUY") {
               // Use 10% of total portfolio
-              const tradeValue = portfolio.totalValue * 0.1;
+              const tradeValue = (portfolio.totalValue ?? 0) * 0.1;
 
               // Calculate amount based on token price
               amount = tradeValue / signal.price;
@@ -184,9 +184,9 @@ export async function POST(request: NextRequest) {
               });
             } else if (signal.type === "SELL") {
               // Find the holding for this token
-              const holding = portfolio.holdings.find((h: any) => h.token === signal.token);
+              const holding = (portfolio.holdings ?? []).find((h: any) => h.token === signal.token);
 
-              if (!holding || holding.amount <= 0) {
+              if (!holding || !holding.amount || holding.amount <= 0) {
                 logger.info(`Skipping user ${user.telegramId} - no holdings for ${signal.token}`, {
                   context: "AutoExecution"
                 });

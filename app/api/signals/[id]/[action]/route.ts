@@ -183,7 +183,7 @@ export async function POST(
       }
 
       if (signal.type === "BUY") {
-        const tradeValue = portfolio.totalValue * 0.1
+        const tradeValue = (portfolio.totalValue ?? 0) * 0.1
         amount = tradeValue / signal.price
 
         tradeParams = {
@@ -192,9 +192,9 @@ export async function POST(
           quantity: amount,
         }
       } else if (signal.type === "SELL") {
-        const holding = portfolio.holdings.find((h: any) => h.token === signal.token)
+        const holding = (portfolio.holdings ?? []).find((h: any) => h.token === signal.token)
 
-        if (!holding || holding.amount <= 0) {
+        if (!holding || !holding.amount || holding.amount <= 0) {
           return NextResponse.json({ error: "No holdings found for this token" }, { status: 400 })
         }
 

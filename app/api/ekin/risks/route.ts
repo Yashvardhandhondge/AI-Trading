@@ -29,10 +29,7 @@ export async function GET(request: NextRequest) {
     // Fetch risk data from Ekin API
     const riskData = await EkinApiService.getRisksByExchange(exchange)
 
-    logger.info(`Fetched risk data from Ekin API for ${exchange}`, {
-      context: "EkinAPI",
-      userId: user._id,
-    })
+    logger.info(`Fetched risk data from Ekin API for ${exchange}`)
 
     return NextResponse.json({ risks: riskData })
   } catch (error) {

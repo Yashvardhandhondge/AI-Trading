@@ -63,8 +63,11 @@ const userSchema = new mongoose.Schema({
   authDate: Number,
   exchange: { type: String, enum: ["binance", "btcc"] },
   exchangeConnected: { type: Boolean, default: false },
-  apiKey: { type: String },
-  apiSecret: { type: String },
+  apiKey: { type: String }, // To be removed when apiKeyStoredExternally is true
+  apiSecret: { type: String }, // To be removed when apiKeyStoredExternally is true
+  apiKeyStoredExternally: { type: Boolean, default: false }, 
+  proxyUserId: { type: String }, 
+  autoTradeEnabled: { type: Boolean, default: true }, // Added field
   riskLevel: { type: String, enum: ["low", "medium", "high"], default: "medium" },
   lastSignalTokens: {
     type: [
@@ -85,7 +88,7 @@ const signalSchema = new mongoose.Schema({
   token: { type: String, required: true },
   price: { type: Number, required: true },
   riskLevel: { type: String, enum: ["low", "medium", "high"], required: true },
-  createdAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now }, // Made createdAt required
   expiresAt: { type: Date, required: true },
   autoExecuted: { type: Boolean, default: false },
   link: String,
@@ -107,6 +110,14 @@ const tradeSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 })
 
+const partialExitSchema = new mongoose.Schema({
+  tradeId: { type: mongoose.Schema.Types.ObjectId, ref: "Trade", required: true },
+  percentage: { type: Number, required: true },
+  price: { type: Number, required: true },
+  amount: { type: Number, required: true },
+  timestamp: { type: Date, default: Date.now, required: true },
+}, { _id: false });
+
 const cycleSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   token: { type: String, required: true },
@@ -118,21 +129,22 @@ const cycleSchema = new mongoose.Schema({
   pnl: { type: Number },
   pnlPercentage: { type: Number },
   guidance: { type: String },
+  partialExits: { type: [partialExitSchema], default: [] }, // Added partialExits field
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 })
 
 const portfolioSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  totalValue: { type: Number, default: 0 },
+  totalValue: { type: Number, default: 0 }, // Default ensures it's always present
   freeCapital: { type: Number, default: 0 },
   allocatedCapital: { type: Number, default: 0 },
   realizedPnl: { type: Number, default: 0 },
   unrealizedPnl: { type: Number, default: 0 },
   holdings: [
     {
-      token: String,
-      amount: Number,
+      token: { type: String, required: true }, // Made token required
+      amount: { type: Number, required: true }, // Made amount required
       averagePrice: Number,
       currentPrice: Number,
       value: Number,
@@ -174,8 +186,12 @@ function defineModel<T extends mongoose.Document>(modelName: string, schema: mon
 
 // Define interfaces for Document types if not already available
 // (These are examples, adjust them based on your actual schema definitions if needed for type safety with defineModel)
-interface UserDocument extends mongoose.Document {
-  _id: mongoose.Types.ObjectId; // Explicit _id
+
+// Note: When using `_id` (which is a mongoose.Types.ObjectId) in contexts
+// that expect a string (e.g., logging, URL parameters, some API payloads),
+// remember to convert it using `.toString()`, e.g., `user._id.toString()`.
+export interface UserDocument extends mongoose.Document {
+  _id: mongoose.Types.ObjectId; 
   telegramId: number;
   username?: string;
   firstName?: string;
@@ -184,21 +200,24 @@ interface UserDocument extends mongoose.Document {
   authDate?: number;
   exchange?: "binance" | "btcc";
   exchangeConnected?: boolean;
-  apiKey?: string;
-  apiSecret?: string;
+  apiKey?: string; 
+  apiSecret?: string; 
+  apiKeyStoredExternally?: boolean; 
+  proxyUserId?: string; 
+  autoTradeEnabled: boolean; // Added property, required due to schema default
   riskLevel: "low" | "medium" | "high"; 
   lastSignalTokens: { token: string; timestamp: Date }[]; 
   createdAt?: Date;
   updatedAt?: Date;
   isAdmin?: boolean; 
 }
-interface SignalDocument extends mongoose.Document {
+export interface SignalDocument extends mongoose.Document {
   _id: mongoose.Types.ObjectId; // Explicit _id
   type: "BUY" | "SELL";
   token: string;
   price: number;
   riskLevel: "low" | "medium" | "high";
-  createdAt?: Date;
+  createdAt: Date; // Changed from optional (createdAt?: Date) to required (createdAt: Date)
   expiresAt: Date;
   autoExecuted?: boolean;
   link?: string;
@@ -206,11 +225,11 @@ interface SignalDocument extends mongoose.Document {
   warnings?: string[];
   warning_count?: number;
 }
-interface TradeDocument extends mongoose.Document {
+export interface TradeDocument extends mongoose.Document {
   _id: mongoose.Types.ObjectId; // Explicit _id
-  userId: mongoose.Schema.Types.ObjectId;
-  signalId?: mongoose.Schema.Types.ObjectId;
-  cycleId?: mongoose.Schema.Types.ObjectId;
+  userId: mongoose.Types.ObjectId; // Changed type
+  signalId?: mongoose.Types.ObjectId; // Changed type
+  cycleId?: mongoose.Types.ObjectId; // Changed type
   type: "BUY" | "SELL";
   token: string;
   price: number;
@@ -219,32 +238,40 @@ interface TradeDocument extends mongoose.Document {
   autoExecuted?: boolean;
   createdAt?: Date;
 }
-interface CycleDocument extends mongoose.Document {
+export interface PartialExitDocument {
+  tradeId: mongoose.Types.ObjectId;
+  percentage: number;
+  price: number;
+  amount: number;
+  timestamp: Date;
+}
+export interface CycleDocument extends mongoose.Document {
   _id: mongoose.Types.ObjectId; // Explicit _id
-  userId: mongoose.Schema.Types.ObjectId;
+  userId: mongoose.Types.ObjectId; // Changed type
   token: string;
-  entryTrade?: mongoose.Schema.Types.ObjectId;
-  exitTrade?: mongoose.Schema.Types.ObjectId;
+  entryTrade?: mongoose.Types.ObjectId; // Changed type
+  exitTrade?: mongoose.Types.ObjectId; // Changed type
   state?: "entry" | "hold" | "exit" | "completed";
   entryPrice: number; // Changed from optional to required
   exitPrice?: number;
   pnl?: number;
   pnlPercentage?: number;
   guidance?: string;
+  partialExits?: PartialExitDocument[]; // Added partialExits property
   createdAt?: Date;
   updatedAt?: Date;
 }
-interface PortfolioDocument extends mongoose.Document {
+export interface PortfolioDocument extends mongoose.Document {
   _id: mongoose.Types.ObjectId; // Explicit _id
-  userId: mongoose.Schema.Types.ObjectId;
-  totalValue?: number;
+  userId: mongoose.Types.ObjectId; // Changed type
+  totalValue: number; // Changed from optional due to schema default
   freeCapital?: number;
   allocatedCapital?: number;
   realizedPnl?: number;
   unrealizedPnl?: number;
   holdings?: {
-    token?: string;
-    amount?: number;
+    token: string; // Changed from optional
+    amount: number; // Changed from optional
     averagePrice?: number;
     currentPrice?: number;
     value?: number;
@@ -253,13 +280,13 @@ interface PortfolioDocument extends mongoose.Document {
   }[];
   updatedAt?: Date;
 }
-interface NotificationDocument extends mongoose.Document {
+export interface NotificationDocument extends mongoose.Document {
   _id: mongoose.Types.ObjectId; // Explicit _id
-  userId: mongoose.Schema.Types.ObjectId;
+  userId: mongoose.Types.ObjectId; // Changed type
   type: "signal" | "trade" | "cycle" | "system";
   message: string;
   read?: boolean;
-  relatedId?: mongoose.Schema.Types.ObjectId;
+  relatedId?: mongoose.Types.ObjectId; // Changed type
   createdAt?: Date;
 }
 
@@ -274,4 +301,5 @@ export const models = {
   Notification: defineModel<NotificationDocument>("Notification", notificationSchema),
   ActivityLog: ActivityLog, // Already robustly defined in its own file
   SystemLog: SystemLog      // Already robustly defined in its own file
+  
 };

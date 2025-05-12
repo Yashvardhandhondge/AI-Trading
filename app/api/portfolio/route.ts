@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
         })
       } else {
         // Optionally refresh portfolio data if it's stale
-        const lastUpdate = new Date(portfolio.updatedAt).getTime()
+        const lastUpdate = new Date(portfolio.updatedAt ?? new Date()).getTime()
         const now = Date.now()
         const fiveMinutes = 5 * 60 * 1000
         

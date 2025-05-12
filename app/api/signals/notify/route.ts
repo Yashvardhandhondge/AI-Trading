@@ -60,7 +60,7 @@ export async function POST(request: Request) {
           userId: user._id,
           type: "signal",
           message,
-          relatedId: signal._id,
+          relatedId: signal._id.toString(),
           priority: "high",
           data: {
             signalId: signal._id,

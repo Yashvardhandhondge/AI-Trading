@@ -198,7 +198,7 @@ export class EnhancedNotificationService {
         if (!user) {
           throw new Error(`User with Telegram ID ${options.userId} not found`);
         }
-        internalUserId = user._id;
+        internalUserId = user._id.toString();
       }
       
       // Check if this notification already exists in the database

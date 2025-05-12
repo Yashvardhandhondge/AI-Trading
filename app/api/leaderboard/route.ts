@@ -32,14 +32,14 @@ export async function GET(request: NextRequest) {
         })
 
         // Calculate win/loss ratio
-        const winningCycles = cycles.filter((cycle) => cycle.pnl > 0).length
-        const losingCycles = cycles.filter((cycle) => cycle.pnl < 0).length
+        const winningCycles = cycles.filter((cycle) => (cycle.pnl ?? 0) > 0).length
+        const losingCycles = cycles.filter((cycle) => (cycle.pnl ?? 0) < 0).length
         const winLossRatio = losingCycles > 0 ? winningCycles / losingCycles : winningCycles
 
         // Calculate gain/loss percentage
         const totalGain = cycles.reduce((sum, cycle) => sum + (cycle.pnl || 0), 0)
         const totalInvested = cycles.reduce((sum, cycle) => {
-          if (cycle.entryPrice) {
+          if (cycle.entryPrice && cycle.pnl !== undefined && cycle.pnlPercentage !== undefined) {
             // Estimate the invested amount from the entry price
             const tradeAmount = cycle.pnl / (cycle.pnlPercentage / 100)
             return sum + tradeAmount

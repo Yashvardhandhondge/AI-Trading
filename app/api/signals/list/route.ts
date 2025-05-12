@@ -1,11 +1,12 @@
 // app/api/signals/list/route.ts
 import { type NextRequest, NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/auth"
-import { connectToDatabase, models } from "@/lib/db"
+import { connectToDatabase, models, SignalDocument as LibSignalDocument } from "@/lib/db" // Import SignalDocument as LibSignalDocument
 import { EkinApiService } from "@/lib/ekin-api"
 import { logger } from "@/lib/logger"
+import mongoose from "mongoose" // Import mongoose for Document type
 
-// Define signal types for TypeScript
+// Define signal types for TypeScript (target type for API response)
 interface Signal {
   id: string;
   type: "BUY" | "SELL";
@@ -21,11 +22,7 @@ interface Signal {
   warning_count?: number;
 }
 
-// MongoDB document with _id field
-interface SignalDocument extends Omit<Signal, "id"> {
-  _id: any;
-  toObject?: () => any;
-}
+// Local SignalDocument interface is removed as we will use the imported LibSignalDocument
 
 export async function GET(request: NextRequest) {
   try {
@@ -92,7 +89,7 @@ export async function GET(request: NextRequest) {
     // Get signals from database
     const dbSignals = await models.Signal.find(query)
       .sort({ createdAt: -1 })
-      .limit(limit)
+      .limit(limit) as (mongoose.Document & LibSignalDocument)[]; // Explicitly type the fetched documents
 
     if (dbSignals && dbSignals.length > 0) {
       logger.info(`Found ${dbSignals.length} signals in database`, {
@@ -101,17 +98,18 @@ export async function GET(request: NextRequest) {
       })
       
       // For SELL signals, only include ones for tokens the user owns
-      const filteredSignals = dbSignals.map((signal: SignalDocument) => {
+      const filteredSignals = dbSignals.map((signalDoc) => { // Type of signalDoc is inferred or can be (mongoose.Document & LibSignalDocument)
         // Convert MongoDB document to plain object and ensure dates are strings
-        const plainSignal = signal.toObject ? signal.toObject() : signal;
+        const plainSignal = signalDoc.toObject ? signalDoc.toObject() : { ...signalDoc };
         
         // Convert createdAt and expiresAt to ISO strings for consistent handling
+        // plainSignal.createdAt and plainSignal.expiresAt are now guaranteed to be Date objects
         return {
           ...plainSignal,
           id: plainSignal._id.toString(),
           createdAt: new Date(plainSignal.createdAt).toISOString(),
           expiresAt: new Date(plainSignal.expiresAt).toISOString()
-        };
+        } as Signal; // Cast to the target Signal interface for the API response
       }).filter((signal: Signal) => {
         if (signal.type === "SELL") {
           return userHoldings.includes(signal.token)

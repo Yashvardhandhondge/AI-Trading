@@ -1,8 +1,27 @@
 // lib/auto-execution-service.ts
 import { logger } from "@/lib/logger";
-import { connectToDatabase, models } from "@/lib/db";
+import { connectToDatabase, models, SignalDocument, UserDocument, PortfolioDocument } from "@/lib/db"; // Import UserDocument and SignalDocument
 import { tradingProxy } from "@/lib/trading-proxy";
 import { enhancedNotificationService } from "@/lib/enhanced-notification-service";
+import mongoose from "mongoose"; // Import mongoose for Document type
+
+// Define a type for the items in user.lastSignalTokens for clarity
+interface LastSignalTokenItem {
+  token: string;
+  timestamp: Date;
+}
+
+// Define a type for portfolio holdings items for clarity
+interface PortfolioHoldingItem {
+  token: string;
+  amount: number;
+  averagePrice?: number;
+  currentPrice?: number;
+  value?: number;
+  pnl?: number;
+  pnlPercentage?: number;
+}
+
 
 export class AutoExecutionService {
   private static instance: AutoExecutionService;
@@ -39,7 +58,7 @@ export class AutoExecutionService {
       const expiredSignals = await models.Signal.find({
         expiresAt: { $lte: now },
         autoExecuted: false
-      });
+      }) as (mongoose.Document<unknown, {}, SignalDocument> & SignalDocument)[]; // Type assertion
       
       logger.info(`Found ${expiredSignals.length} signals to auto-execute`, { context: "AutoExecution" });
       
@@ -135,7 +154,7 @@ export class AutoExecutionService {
   /**
    * Find users eligible for auto-execution of a signal
    */
-  private async findEligibleUsersForSignal(signal: any): Promise<any[]> {
+  private async findEligibleUsersForSignal(signal: SignalDocument): Promise<UserDocument[]> {
     try {
       // Different criteria for BUY vs SELL signals
       if (signal.type === "BUY") {
@@ -143,13 +162,13 @@ export class AutoExecutionService {
         const eligibleUsers = await models.User.find({
           riskLevel: signal.riskLevel,
           exchangeConnected: true,
-          autoTradeEnabled: { $ne: false } // Include users who have it enabled or not set
-        });
+          autoTradeEnabled: true // Query for explicitly true, as schema defaults to true
+        }) as UserDocument[];
         
         // Filter out users who have already received a signal for this token in the last 24 hours
         return eligibleUsers.filter(user => {
           const hasRecentSignal = user.lastSignalTokens.some(
-            (item: any) =>
+            (item: LastSignalTokenItem) => // Use defined type
               item.token === signal.token &&
               new Date().getTime() - new Date(item.timestamp).getTime() < 24 * 60 * 60 * 1000
           );
@@ -160,18 +179,18 @@ export class AutoExecutionService {
         // For SELL signals, we need to check portfolio holdings
         const usersWithExchange = await models.User.find({
           exchangeConnected: true,
-          autoTradeEnabled: { $ne: false } // Include users who have it enabled or not set
-        });
+          autoTradeEnabled: true // Query for explicitly true
+        }) as UserDocument[];
         
-        const eligibleUsers = [];
+        const eligibleUsers: UserDocument[] = [];
         
         // Check each user's portfolio to see if they own the token
         for (const user of usersWithExchange) {
-          const portfolio = await models.Portfolio.findOne({ userId: user._id });
+          const portfolio = await models.Portfolio.findOne({ userId: user._id }) as PortfolioDocument | null;
           
           if (portfolio && portfolio.holdings) {
             const hasToken = portfolio.holdings.some(
-              (h: any) => h.token === signal.token && h.amount > 0
+              (h: PortfolioHoldingItem) => h.token === signal.token && h.amount > 0 // Use defined type
             );
             
             if (hasToken) {
@@ -193,7 +212,7 @@ export class AutoExecutionService {
   /**
    * Execute a trade for a specific user
    */
-  private async executeTradeForUser(signal: any, user: any): Promise<{
+  private async executeTradeForUser(signal: SignalDocument, user: UserDocument): Promise<{
     success: boolean;
     amount?: number;
     price?: number;
@@ -205,7 +224,7 @@ export class AutoExecutionService {
       });
       
       // Get user's portfolio
-      const portfolio = await models.Portfolio.findOne({ userId: user._id });
+      const portfolio = await models.Portfolio.findOne({ userId: user._id }) as PortfolioDocument | null;
       
       if (!portfolio) {
         throw new Error("User portfolio not found");
@@ -217,7 +236,7 @@ export class AutoExecutionService {
       // Calculate trade amount based on signal type
       if (signal.type === "BUY") {
         // Use 10% of total portfolio value
-        const tradeValue = portfolio.totalValue * 0.1;
+        const tradeValue = portfolio.totalValue * 0.1; // totalValue is now required number
         
         if (tradeValue <= 0) {
           throw new Error("Insufficient portfolio value");
@@ -232,7 +251,7 @@ export class AutoExecutionService {
         });
       } else if (signal.type === "SELL") {
         // Find the holding for this token
-        const holding = portfolio.holdings.find((h: any) => h.token === signal.token);
+        const holding = portfolio.holdings?.find((h: PortfolioHoldingItem) => h.token === signal.token); // Use defined type
         
         if (!holding || holding.amount <= 0) {
           throw new Error(`No holdings found for ${signal.token}`);
@@ -276,7 +295,7 @@ export class AutoExecutionService {
           token: signal.token,
           entryTrade: trade._id,
           state: "entry",
-          entryPrice: tradeResult.price || signal.price,
+          entryPrice: tradeResult.price || signal.price, // entryPrice is required
           guidance: "Hold until exit signal or 10% profit",
           createdAt: new Date(),
           updatedAt: new Date()
@@ -295,7 +314,7 @@ export class AutoExecutionService {
         
         if (cycle) {
           // Calculate PnL
-          const pnl = ((tradeResult.price || signal.price) - cycle.entryPrice) * amount;
+          const pnl = ((tradeResult.price || signal.price) - cycle.entryPrice) * amount; // cycle.entryPrice is required number
           const pnlPercentage = ((tradeResult.price || signal.price) - cycle.entryPrice) / cycle.entryPrice * 100;
           
           // Update cycle
@@ -340,10 +359,10 @@ export class AutoExecutionService {
       
       // Send notification to user about auto-execution
       await enhancedNotificationService.sendNotification({
-        userId: user._id,
+        userId: user._id.toString(), // Convert ObjectId to string
         type: "trade",
         message: `Auto-executed ${signal.type} for ${signal.token} at $${tradeResult.price || signal.price}`,
-        relatedId: trade._id,
+        relatedId: trade._id.toString(), // Convert ObjectId to string
         priority: "high",
         data: {
           tradeId: trade._id.toString(),
@@ -365,7 +384,7 @@ export class AutoExecutionService {
       
       // Send failure notification to user
       await enhancedNotificationService.sendNotification({
-        userId: user._id,
+        userId: user._id.toString(), // Convert ObjectId to string
         type: "system",
         message: `Failed to auto-execute ${signal.type} for ${signal.token}: ${error instanceof Error ? error.message : "Unknown error"}`,
         priority: "high"
