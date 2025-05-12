@@ -65,12 +65,13 @@ const activityLogSchema = new mongoose.Schema({
     ref: "Trade" 
   },
   updatedAt: { 
-    type: Date
+    type: Date,
+    default: Date.now
   }
 })
 
 // Create the ActivityLog model
-export const ActivityLog = mongoose.models.ActivityLog || mongoose.model("ActivityLog", activityLogSchema)
+const ActivityLog = mongoose.models.ActivityLog || mongoose.model("ActivityLog", activityLogSchema)
 
-// Export the model
+// Export as default
 export default ActivityLog
