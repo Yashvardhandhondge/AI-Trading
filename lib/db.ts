@@ -1,19 +1,19 @@
 // lib/db.ts - Fixed to properly export ActivityLog model
 import mongoose from "mongoose"
 import crypto from "crypto"
-import { SystemLog } from "./schemas/system-log-schema"
-import ActivityLog from "./schemas/activity-log-schema"
+import { SystemLog, SystemLogDocument } from "./schemas/system-log-schema" // Assuming SystemLogDocument is exported
+import ActivityLog from "./schemas/activity-log-schema" // Assuming ActivityLogDocument might be useful later or is part of its type
 
 declare global {
-  var mongoose: { conn: any; promise: any } | undefined
+  var mongooseConnectionCache: { conn: any; promise: any } | undefined // Renamed from mongoose
 }
 
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://richardjzacs:c8JX2NGNgTaRU0np@cluster0.cbrup.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
-let cached = global.mongoose || { conn: null, promise: null }
+let cached = global.mongooseConnectionCache || { conn: null, promise: null } // Updated to use renamed global
 
 if (!cached) {
-  cached = global.mongoose = { conn: null, promise: null }
+  cached = global.mongooseConnectionCache = { conn: null, promise: null } // Updated to use renamed global
 }
 
 export async function connectToDatabase() {
@@ -149,14 +149,62 @@ const notificationSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 })
 
+// Helper function for robust model definition
+function defineModel<T extends mongoose.Document>(modelName: string, schema: mongoose.Schema): mongoose.Model<T> {
+  if (mongoose && typeof mongoose.models === 'object' && mongoose.models !== null) {
+    return (mongoose.models[modelName] as mongoose.Model<T>) || mongoose.model<T>(modelName, schema);
+  } else {
+    console.warn(
+      `mongoose.models is not an object or mongoose is not fully initialized when defining ${modelName} model. mongoose object:`,
+      mongoose,
+      "mongoose.models:",
+      mongoose ? mongoose.models : "mongoose is undefined"
+    );
+    try {
+      return mongoose.model<T>(modelName, schema);
+    } catch (e: any) {
+      console.error(`Fallback mongoose.model("${modelName}", ...) failed:`, e);
+      throw new Error(`Critical error: Unable to define ${modelName} model due to problematic Mongoose state. Original error: ${e.message}`);
+    }
+  }
+}
+
+// Define interfaces for Document types if not already available
+// (These are examples, adjust them based on your actual schema definitions if needed for type safety with defineModel)
+interface UserDocument extends mongoose.Document {
+  telegramId: number;
+  // ... other user fields
+}
+interface SignalDocument extends mongoose.Document {
+  type: "BUY" | "SELL";
+  // ... other signal fields
+}
+interface TradeDocument extends mongoose.Document {
+  userId: mongoose.Schema.Types.ObjectId;
+  // ... other trade fields
+}
+interface CycleDocument extends mongoose.Document {
+  userId: mongoose.Schema.Types.ObjectId;
+  // ... other cycle fields
+}
+interface PortfolioDocument extends mongoose.Document {
+  userId: mongoose.Schema.Types.ObjectId;
+  // ... other portfolio fields
+}
+interface NotificationDocument extends mongoose.Document {
+  userId: mongoose.Schema.Types.ObjectId;
+  // ... other notification fields
+}
+
+
 // Create and export models
 export const models = {
-  User: mongoose.models.User || mongoose.model("User", userSchema),
-  Signal: mongoose.models.Signal || mongoose.model("Signal", signalSchema),
-  Trade: mongoose.models.Trade || mongoose.model("Trade", tradeSchema),
-  Cycle: mongoose.models.Cycle || mongoose.model("Cycle", cycleSchema),
-  Portfolio: mongoose.models.Portfolio || mongoose.model("Portfolio", portfolioSchema),
-  Notification: mongoose.models.Notification || mongoose.model("Notification", notificationSchema),
-  ActivityLog: ActivityLog,
-  SystemLog: mongoose.models.SystemLog || SystemLog
-}
+  User: defineModel<UserDocument>("User", userSchema),
+  Signal: defineModel<SignalDocument>("Signal", signalSchema),
+  Trade: defineModel<TradeDocument>("Trade", tradeSchema),
+  Cycle: defineModel<CycleDocument>("Cycle", cycleSchema),
+  Portfolio: defineModel<PortfolioDocument>("Portfolio", portfolioSchema),
+  Notification: defineModel<NotificationDocument>("Notification", notificationSchema),
+  ActivityLog: ActivityLog, // Already robustly defined in its own file
+  SystemLog: SystemLog      // Already robustly defined in its own file
+};

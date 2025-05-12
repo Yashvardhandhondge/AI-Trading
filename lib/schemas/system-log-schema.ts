@@ -1,5 +1,5 @@
 // lib/schemas/system-log-schema.ts
-import mongoose from "mongoose";
+import mongoose, { Model, Document } from "mongoose";
 
 /**
  * System Log Schema for tracking background processes and events
@@ -41,10 +41,38 @@ systemLogSchema.index({ timestamp: -1 });
 systemLogSchema.index({ type: 1, action: 1 });
 
 // Create and export model if it doesn't already exist
-export const SystemLog = mongoose.models.SystemLog || mongoose.model("SystemLog", systemLogSchema);
+// export const SystemLog = mongoose.models.SystemLog || mongoose.model("SystemLog", systemLogSchema);
+
+let SystemLog: Model<SystemLogDocument>;
+
+// Robustly define the SystemLog model
+if (mongoose && typeof mongoose.models === 'object' && mongoose.models !== null) {
+  SystemLog = mongoose.models.SystemLog || mongoose.model<SystemLogDocument>("SystemLog", systemLogSchema);
+} else {
+  console.warn(
+    "mongoose.models is not an object or mongoose is not fully initialized when defining SystemLog model. mongoose object:", 
+    mongoose, 
+    "mongoose.models:", 
+    mongoose ? mongoose.models : "mongoose is undefined"
+  );
+  // Fallback: attempt to define the model directly.
+  try {
+    SystemLog = mongoose.model<SystemLogDocument>("SystemLog", systemLogSchema);
+  } catch (e: any) {
+    console.error("Fallback mongoose.model(\"SystemLog\", ...) failed:", e);
+    throw new Error(`Critical error: Unable to define SystemLog model due to problematic Mongoose state. Original error: ${e.message}`);
+  }
+}
+
+// Ensure the model is defined
+if (!SystemLog) {
+  throw new Error("SystemLog model could not be defined. Check Mongoose setup and previous console warnings/errors.");
+}
+
+export { SystemLog };
 
 // Export the schema type for TypeScript
-export type SystemLogDocument = mongoose.Document & {
+export type SystemLogDocument = Document & {
   type: "cron" | "api" | "error" | "auth" | "system";
   action: string;
   timestamp: Date;

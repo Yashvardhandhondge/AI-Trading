@@ -1,5 +1,5 @@
 // lib/schemas/activity-log-schema.ts
-import mongoose from "mongoose"
+import mongoose, { Model } from "mongoose";
 
 // Schema for activity log entries
 const activityLogSchema = new mongoose.Schema({
@@ -68,10 +68,38 @@ const activityLogSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
-})
+});
 
-// Create the ActivityLog model
-const ActivityLog = mongoose.models.ActivityLog || mongoose.model("ActivityLog", activityLogSchema)
+let ActivityLog: Model<any>;
+
+// Robustly define the ActivityLog model
+if (mongoose && typeof mongoose.models === 'object' && mongoose.models !== null) {
+  ActivityLog = mongoose.models.ActivityLog || mongoose.model("ActivityLog", activityLogSchema);
+} else {
+  console.warn(
+    "mongoose.models is not an object or mongoose is not fully initialized when defining ActivityLog model. mongoose object:", 
+    mongoose, 
+    "mongoose.models:", 
+    mongoose ? mongoose.models : "mongoose is undefined"
+  );
+  // Fallback: attempt to define the model directly.
+  // This might throw an OverwriteModelError if the model gets registered by another means later,
+  // or fail if 'mongoose.model' itself is not functional (e.g., if 'mongoose' is not the real Mongoose object).
+  try {
+    ActivityLog = mongoose.model("ActivityLog", activityLogSchema);
+  } catch (e: any) {
+    console.error("Fallback mongoose.model(\"ActivityLog\", ...) failed:", e);
+    // Propagate a more informative error if the fallback fails.
+    throw new Error(`Critical error: Unable to define ActivityLog model due to problematic Mongoose state. Original error: ${e.message}`);
+  }
+}
+
+// Ensure the model is defined
+if (!ActivityLog) {
+  // This case should ideally not be reached if the above logic is sound.
+  // It indicates a failure in both the primary and fallback model definition attempts.
+  throw new Error("ActivityLog model could not be defined. Check Mongoose setup and previous console warnings/errors.");
+}
 
 // Export as default
-export default ActivityLog
+export default ActivityLog;
