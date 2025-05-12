@@ -79,14 +79,7 @@ export function SignalCard({
       if (isCreatedTooOld || isPastExpiry || isOldSignal) {
         setTimeLeft(0);
         setIsSignalExpired(true);
-        logger.info(`Signal ${signal.id} for ${signal.token} is expired`, {
-          createdAt: createdAt.toISOString(),
-          expiresAt: expiresAt.toISOString(),
-          now: now.toISOString(),
-          isCreatedTooOld,
-          isPastExpiry,
-          isOldSignal
-        });
+        logger.info(`Signal ${signal.id} for ${signal.token} is expired`);
         return;
       }
       
