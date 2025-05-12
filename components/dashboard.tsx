@@ -16,7 +16,7 @@ import {
   Bell 
 } from "lucide-react"
 import { SignalCard } from "@/components/signal-card"
-import { BotActivityLog } from "./BotActivityLog"
+
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
 import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
 import { ActivityLogTable } from "./activity-log-table"

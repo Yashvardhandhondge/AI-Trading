@@ -108,6 +108,11 @@ export function ProfitLossView({ user, onSwitchToSettings }: ProfitLossViewProps
     )
   }
 
+  const handleRefresh = (event: React.MouseEvent<HTMLButtonElement, MouseEvent>) => {
+    event.preventDefault()
+    fetchPortfolioData(false) // Pass false to show refresh state instead of loading state
+  }
+
   return (
     <div className="container mx-auto p-4 pb-20">
       <div className="flex justify-between items-center mb-4">
