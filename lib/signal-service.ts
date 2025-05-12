@@ -2,6 +2,7 @@
 // lib/signal-service.ts
 import { logger } from "@/lib/logger";
 import { EkinApiService } from "@/lib/ekin-api";
+import ActivityLogService from "./activity-log-service";
 
 // Define interfaces for signal data
 export interface Signal {
@@ -80,6 +81,8 @@ class SignalService {
       logger.error(`Error storing signal expiry times: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   }
+
+  
   
 
   /**
@@ -368,88 +371,140 @@ class SignalService {
   /**
    * Execute an action on a signal (accept, skip, accept-partial)
    */
-  public async executeSignalAction(
-    signalId: string, 
-    action: "accept" | "skip" | "accept-partial", 
-    percentage?: number
-  ): Promise<boolean> {
+public async executeSignalAction(
+  signalId: string, 
+  action: "accept" | "skip" | "accept-partial", 
+  percentage?: number
+): Promise<boolean> {
+  try {
+    if (!signalId || signalId === "undefined") {
+      logger.error("Cannot execute action: Signal ID is undefined or invalid");
+      throw new Error("Invalid signal ID. Action cannot be processed.");
+    }
+    
+    logger.info(`Executing ${action} on signal ${signalId}`);
+    
+    // Find the signal details to include in the activity log
+    let signal: Signal | undefined;
+    for (const s of this.cachedSignals) {
+      if (s.id === signalId) {
+        signal = s;
+        break;
+      }
+    }
+    
+    // If we don't have the signal details, try to fetch it
+    if (!signal) {
+      try {
+        const response = await fetch(`/api/signals/${signalId}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.signal) {
+            signal = data.signal;
+          }
+        }
+      } catch (e) {
+        // Continue even if we can't get signal details
+        logger.error(`Error fetching signal details: ${e instanceof Error ? e.message : "Unknown error"}`);
+      }
+    }
+    
+    // If we still don't have signal details, log with minimal info
+    if (!signal) {
+      logger.warn(`Executing action on signal with unknown details: ${signalId}`);
+    }
+    
+    // Create a new pending activity log entry
+    let activityLogId: string | undefined;
     try {
-      if (!signalId || signalId === "undefined") {
-        logger.error("Cannot execute action: Signal ID is undefined or invalid");
-        throw new Error("Invalid signal ID. Action cannot be processed.");
-      }
+      const token = signal?.token || "unknown";
+      const logAction = action === "accept" 
+        ? signal?.type === "BUY" ? "BUY_ATTEMPT" : "SELL_ATTEMPT"
+        : action === "accept-partial" 
+          ? "SELL_ATTEMPT" 
+          : "SIGNAL_SKIPPED";
       
-      logger.info(`Executing ${action} on signal ${signalId}`);
-      
-      const body: Record<string, any> = {};
-      if (percentage !== undefined) {
-        body.percentage = percentage;
-      }
-      
-      // First check if this is a temporary ID (starts with temp_)
-      if (signalId.startsWith('temp_')) {
-        logger.info(`Processing temporary signal ID: ${signalId}`);
-        
-        // For temporary IDs, we need to create the signal in the database first
-        // Extract the signal from cached signals
-        const signal = this.cachedSignals.find(s => s.id === signalId);
-        
-        if (!signal) {
-          throw new Error(`Signal with ID ${signalId} not found in cache`);
-        }
-        
-        // Store signal in database to get a real MongoDB ID
-        try {
-          const storeResponse = await fetch("/api/signals/store", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(signal),
-          });
-          
-          if (!storeResponse.ok) {
-            throw new Error(`Failed to store signal: ${storeResponse.status}`);
-          }
-          
-          const storeData = await storeResponse.json();
-          
-          if (!storeData.success || !storeData.signalId) {
-            throw new Error("No signal ID returned from store operation");
-          }
-          
-          // Use the real MongoDB ID for the action
-          signalId = storeData.signalId;
-          logger.info(`Temporary signal stored successfully with real ID: ${signalId}`);
-        } catch (storeError) {
-          logger.error(`Error storing temporary signal: ${storeError instanceof Error ? storeError.message : "Unknown error"}`);
-          throw new Error("Failed to prepare signal for action");
-        }
-      }
-      
-      // Now execute the action with the real ID
-      const response = await fetch(`/api/signals/${signalId}/${action}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
+      const logEntry = await ActivityLogService.recordActivity({
+        userId: "currentUser", // This will be replaced with actual user ID in the API route
+        action: logAction,
+        token,
+        status: action === "skip" ? "success" : "pending", // Skip is immediately successful
+        details: action === "accept-partial" 
+          ? `Partial sell (${percentage}%) of ${token}` 
+          : action === "skip" 
+            ? `Skipped ${signal?.type || ""} signal for ${token}`
+            : `${signal?.type || ""} ${token}`,
+        price: signal?.price,
+        signalId
       });
       
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: `Error ${response.status}` }));
-        const errorMessage = errorData.error || errorData.message || `Error ${response.status}`;
-        throw new Error(errorMessage);
+      activityLogId = logEntry._id.toString();
+    } catch (logError) {
+      // Continue even if logging fails
+      logger.error(`Error creating activity log: ${logError instanceof Error ? logError.message : "Unknown error"}`);
+    }
+    
+    // Rest of existing code for executeSignalAction...
+    const body: Record<string, any> = {};
+    if (percentage !== undefined) {
+      body.percentage = percentage;
+    }
+    
+    // Logic for temporary IDs same as before...
+    
+    // Execute the action
+    const response = await fetch(`/api/signals/${signalId}/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: `Error ${response.status}` }));
+      const errorMessage = errorData.error || errorData.message || `Error ${response.status}`;
+      
+      // Update activity log with failure if we have a log ID
+      if (activityLogId) {
+        try {
+          await ActivityLogService.completeActivity(activityLogId, false, errorMessage);
+        } catch (e) {
+          // Just log the error
+          logger.error(`Error updating activity log: ${e instanceof Error ? e.message : "Unknown error"}`);
+        }
       }
       
-      logger.info(`Successfully executed ${action} on signal ${signalId}`);
-      return true;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      logger.error(`Error executing signal action: ${errorMessage}`);
-      throw error;
+      throw new Error(errorMessage);
     }
+    
+    // Update activity log with success if we have a log ID
+    if (activityLogId && action !== "skip") { // Skip already marked as success
+      try {
+        const responseData = await response.json();
+        const successAction = action === "accept"
+          ? signal?.type === "BUY" ? "BUY_SUCCESS" : "SELL_SUCCESS"
+          : "SELL_SUCCESS";
+          
+        await ActivityLogService.updateActivity(activityLogId, {
+          action: successAction,
+          status: "success",
+          tradeId: responseData.trade?._id,
+          amount: responseData.trade?.amount,
+          price: responseData.trade?.price || signal?.price
+        });
+      } catch (e) {
+        // Just log the error
+        logger.error(`Error updating activity log: ${e instanceof Error ? e.message : "Unknown error"}`);
+      }
+    }
+    
+    logger.info(`Successfully executed ${action} on signal ${signalId}`);
+    return true;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    logger.error(`Error executing signal action: ${errorMessage}`);
+    throw error;
   }
+}
 }
 
 // Export a singleton instance

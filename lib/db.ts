@@ -2,7 +2,7 @@
 import mongoose from "mongoose"
 import crypto from "crypto"
 import { SystemLog } from "./schemas/system-log-schema"
-
+import ActivityLog from "./schemas/activity-log-schema"
 declare global {
   var mongoose: { conn: any; promise: any } | undefined
 }
@@ -156,5 +156,5 @@ export const models = {
   Cycle: mongoose.models.Cycle || mongoose.model("Cycle", cycleSchema),
   Portfolio: mongoose.models.Portfolio || mongoose.model("Portfolio", portfolioSchema),
   Notification: mongoose.models.Notification || mongoose.model("Notification", notificationSchema),
-  SystemLog: SystemLog // Include our new SystemLog model
+  ActivityLog : ActivityLog
 }

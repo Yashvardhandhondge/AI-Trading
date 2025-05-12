@@ -2,22 +2,34 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, Settings, Info, RefreshCw, Clock, AlertCircle } from "lucide-react"
+import { 
+  Loader2, 
+  Settings, 
+  Info, 
+  RefreshCw, 
+  Clock, 
+  AlertCircle, 
+  History, 
+  Bell 
+} from "lucide-react"
+import { SignalCard } from "@/components/signal-card"
+import { BotActivityLog } from "./BotActivityLog"
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
-import { formatCurrency } from "@/lib/utils"
-import { logger } from "@/lib/logger"
+import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
+import { ActivityLogTable } from "./activity-log-table"
 import { toast } from "sonner"
+import { logger } from "@/lib/logger"
 import type { SessionUser } from "@/lib/auth"
 import { signalService, type Signal } from "@/lib/signal-service"
 import { telegramService } from "@/lib/telegram-service"
-import { SignalCard } from "@/components/signal-card"
 
 interface DashboardProps {
   user: SessionUser;
   onExchangeStatusChange?: () => void;
-  onSwitchToSettings?: () => void; // New prop for switching to settings tab
+  onSwitchToSettings?: () => void;
 }
 
 export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: DashboardProps) {
@@ -32,9 +44,11 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
   const [refreshing, setRefreshing] = useState(false)
   const [lastSignalCheckTime, setLastSignalCheckTime] = useState<number>(Date.now())
   const [notifiedSignalIds, setNotifiedSignalIds] = useState<Set<string>>(new Set());
-
+  const [activeTab, setActiveTab] = useState<string>("signals");
+  
   // Fetch active signals - wrapped in useCallback to be reusable
   const fetchSignals = useCallback(async (showLoadingState = true) => {
+    // Implementation remains the same
     try {
       if (showLoadingState) {
         setIsLoading(true)
@@ -74,12 +88,6 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       });
       
       if (processedSignals.length > 0) {
-        // Log the first signal to help with debugging
-        logger.debug(`First signal details: ${JSON.stringify(processedSignals[0])}`, {
-          context: "Dashboard", 
-          userId: user.id
-        })
-        
         setSignals(processedSignals)
         logger.info(`Fetched ${processedSignals.length} signals successfully`, {
           context: "Dashboard", 
@@ -135,7 +143,6 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
     }
   }
   
-  
   useEffect(() => {
     fetchSignals()
     fetchUserHoldings()
@@ -150,25 +157,13 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       logger.error("Failed to load position accumulation from localStorage")
     }
     
-    // Refresh signals every 1 minute (reduced from 2 minutes)
+    // Refresh signals every 1 minute
     const intervalId = setInterval(() => fetchSignals(false), 60000)
     
     return () => {
       clearInterval(intervalId)
     }
   }, [user.id, user.exchangeConnected, fetchSignals])
-  
-  // Handle manual refresh
-  const handleRefresh = () => {
-    fetchSignals(false)
-  }
-  
-  // Handle settings click - Now changes the active tab instead of using router
-  const handleSettingsClick = () => {
-    if (onSwitchToSettings) {
-      onSwitchToSettings();
-    }
-  }
   
   // Check for new signals periodically
   const checkForNewSignals = useCallback(async () => {
@@ -232,10 +227,13 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
           if (newestSignal.price > 0) {
             // Show notification
             toast(`New ${newestSignal.type} signal for ${newestSignal.token}`, {
-              description: `Price: ${formatCurrency(newestSignal.price)}`,
+              description: `Price: ${newestSignal.price}`,
               action: {
                 label: "View",
-                onClick: () => window.scrollTo({ top: 0, behavior: 'smooth' })
+                onClick: () => {
+                  setActiveTab("signals");
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
               },
               duration: 10000 // 10 seconds
             });
@@ -244,9 +242,12 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
             try {
               telegramService.triggerHapticFeedback('notification');
               telegramService.showPopup(
-                `🔔 New ${newestSignal.type} signal for ${newestSignal.token} at ${formatCurrency(newestSignal.price)}`,
+                `🔔 New ${newestSignal.type} signal for ${newestSignal.token}`,
                 [{ type: "default", text: "View" }],
-                () => window.scrollTo({ top: 0, behavior: 'smooth' })
+                () => {
+                  setActiveTab("signals");
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
               );
             } catch (e) {
               // Ignore errors with Telegram API
@@ -262,13 +263,30 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
     }
   }, [lastSignalCheckTime, user.id, notifiedSignalIds]);
   
-  // Update the useEffect for checking new signals to run less frequently
+  // Update the useEffect for checking new signals
   useEffect(() => {
-    // Check for new signals every 2 minutes instead of every 30 seconds
+    // Check for new signals every 2 minutes
     const checkInterval = setInterval(checkForNewSignals, 120000); // 2 minutes
     return () => clearInterval(checkInterval);
   }, [checkForNewSignals]);
+
+  // Handle manual refresh
+  const handleRefresh = () => {
+    fetchSignals(false)
+  }
   
+  // Handle settings click - Now changes the active tab instead of using router
+  const handleSettingsClick = () => {
+    if (onSwitchToSettings) {
+      onSwitchToSettings();
+    }
+  }
+  
+  // Handle tab change
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+  }
+
   // Handle signal actions (Buy/Skip)
   const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => {
     try {
@@ -349,6 +367,11 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
           toast.success(`Successfully bought ${signal.token}`, {
             description: `Position accumulation: ${newAccumulation[signal.token]}%`
           });
+          
+          // Switch to activity log tab to show the result
+          setTimeout(() => {
+            setActiveTab("activity");
+          }, 1500);
         } else if (action === "accept") {
           // For full SELL, remove from position accumulation
           const newAccumulation = { ...positionAccumulation };
@@ -357,6 +380,11 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
           localStorage.setItem('positionAccumulation', JSON.stringify(newAccumulation));
           
           toast.success(`Successfully sold ${signal.token}`);
+          
+          // Switch to activity log tab to show the result
+          setTimeout(() => {
+            setActiveTab("activity");
+          }, 1500);
         } else if (action === "accept-partial" && percentage) {
           // For partial SELL, reduce the accumulated percentage
           const currentAccumulation = positionAccumulation[signal.token] || 0;
@@ -367,6 +395,11 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
             localStorage.setItem('positionAccumulation', JSON.stringify(newAccumulation));
             
             toast.success(`Successfully sold ${percentage}% of ${signal.token}`);
+            
+            // Switch to activity log tab to show the result
+            setTimeout(() => {
+              setActiveTab("activity");
+            }, 1500);
           }
         }
         
@@ -395,6 +428,11 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       const errorMessage = err instanceof Error ? err.message : "Failed to process action";
       toast.error(`Action failed: ${errorMessage}`);
       logger.error(`Signal action error: ${errorMessage}`);
+      
+      // Switch to activity log tab to show the error details
+      setTimeout(() => {
+        setActiveTab("activity");
+      }, 1500);
     } finally {
       // Clear loading state
       setActionLoading(prev => {
@@ -418,12 +456,12 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
     // Close the modal
     setShowConnectModal(false);
   }
-  
+
   if (isLoading && signals.length === 0) {
     return (
       <div className="container mx-auto p-4 pb-20">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold">Bot Trades</h2>
+          <h2 className="text-xl font-bold">Bot Trading Dashboard</h2>
           <div className="flex items-center gap-2">
             <Button 
               variant="ghost" 
@@ -455,7 +493,7 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
   return (
     <div className="container mx-auto p-4 pb-20">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-bold">Bot Trades</h2>
+        <h2 className="text-xl font-bold">Bot Trading Dashboard</h2>
         <div className="flex items-center gap-2">
           <Button 
             variant="ghost" 
@@ -486,46 +524,66 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
         </div>
       )}
       
-      <div className="text-xs text-muted-foreground mb-2">
-        Last updated: {lastUpdated.toLocaleTimeString()}
-      </div>
-      
-      {signals.length === 0 ? (
-        <Card>
-          <CardContent className="p-6 text-center">
-            <p className="text-muted-foreground">No active signals at the moment</p>
-            <p className="text-sm text-muted-foreground mt-2">We'll notify you when new signals are available</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {signals.map(signal => {
-            // Check if this signal has been processed
-            const isProcessed = !!(signal as any).processed;
-            const isOldSignal = !!(signal as any).isOldSignal;
-            const userOwnsToken = !!userHoldings[signal.token] && userHoldings[signal.token] > 0;
-            const showBuyButton = signal.type === "BUY" || (signal.type === "SELL" && userOwnsToken);
-            const accumulatedPercentage = positionAccumulation[signal.token] || 0;
-            
-            // Skip signals that don't match our criteria
-            if (signal.type === "SELL" && !userOwnsToken) {
-              return null;
-            }
-            
-            return (
-              <SignalCard 
-                key={signal.id} 
-                signal={signal} 
-                onAction={handleSignalAction} 
-                exchangeConnected={user.exchangeConnected}
-                userOwnsToken={userOwnsToken}
-                accumulatedPercentage={accumulatedPercentage}
-                isOldSignal={isOldSignal} // Pass the flag to indicate if this is an old signal
-              />
-            );
-          })}
-        </div>
-      )}
+      {/* Tabs for Signals and Log */}
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="mt-2">
+        <TabsList className="grid grid-cols-2 mb-4">
+          <TabsTrigger value="signals" className="flex items-center gap-1">
+            <Bell className="h-4 w-4" />
+            <span>Signals</span>
+          </TabsTrigger>
+          <TabsTrigger value="activity" className="flex items-center gap-1">
+            <History className="h-4 w-4" />
+            <span>Activity Log</span>
+          </TabsTrigger>
+        </TabsList>
+          
+        <TabsContent value="signals">
+          <div className="text-xs text-muted-foreground mb-2">
+            Last updated: {lastUpdated.toLocaleTimeString()}
+          </div>
+          
+          {signals.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center">
+                <p className="text-muted-foreground">No active signals at the moment</p>
+                <p className="text-sm text-muted-foreground mt-2">We'll notify you when new signals are available</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {signals.map(signal => {
+                // Check if this signal has been processed
+                const isProcessed = !!(signal as any).processed;
+                const isOldSignal = !!(signal as any).isOldSignal;
+                const userOwnsToken = !!userHoldings[signal.token] && userHoldings[signal.token] > 0;
+                const showBuyButton = signal.type === "BUY" || (signal.type === "SELL" && userOwnsToken);
+                const accumulatedPercentage = positionAccumulation[signal.token] || 0;
+                
+                // Skip signals that don't match our criteria
+                if (signal.type === "SELL" && !userOwnsToken) {
+                  return null;
+                }
+                
+                return (
+                  <SignalCard 
+                    key={signal.id} 
+                    signal={signal} 
+                    onAction={handleSignalAction} 
+                    exchangeConnected={user.exchangeConnected}
+                    userOwnsToken={userOwnsToken}
+                    accumulatedPercentage={accumulatedPercentage}
+                    isOldSignal={isOldSignal} // Pass the flag to indicate if this is an old signal
+                  />
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+        
+        <TabsContent value="activity">
+          <ActivityLogTable userId={user.id} />
+        </TabsContent>
+      </Tabs>
       
       {/* Connect Exchange Modal */}
       <ConnectExchangeModal 

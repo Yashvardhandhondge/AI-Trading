@@ -49,57 +49,86 @@ export function SignalCard({
   const [showDetails, setShowDetails] = useState<boolean>(false);
   const [actionType, setActionType] = useState<"full" | "partial" | "skip" | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const [signalTimestamp, setSignalTimestamp] = useState<Date | null>(null);
+  const [isSignalExpired, setIsSignalExpired] = useState<boolean>(false);
   
   // Calculate the initial time left based on signal creation and expiration time
-// Update the useEffect that handles the timer
-useEffect(() => {
-  try {
-    if (isOldSignal) {
-      // For old signals (>10 minutes), show 0 time left
-      setTimeLeft(0);
-      return;
-    }
-
-    // For active signals, calculate the proper time left
-    const expiresAt = new Date(signal.expiresAt).getTime();
-    const now = new Date().getTime();
-    
-    // Check if the expiration time is valid
-    if (isNaN(expiresAt)) {
-      logger.error(`Invalid expiresAt date for signal ${signal.id}: ${signal.expiresAt}`);
-      setTimeLeft(0); // Default to 0 for invalid dates
-      return;
-    }
-    
-    // Calculate time left
-    const difference = expiresAt - now;
-    const secondsLeft = Math.max(0, Math.floor(difference / 1000));
-    
-    // If expiration time is more than 10 minutes from now, it might be incorrect
-    // (signals expire after 10 minutes)
-    const totalSeconds = 10 * 60; // 10 minutes in seconds
-    if (secondsLeft > totalSeconds) {
-      // Calculate a more reasonable time left based on createdAt
-      const createdAt = new Date(signal.createdAt).getTime();
-      if (!isNaN(createdAt)) {
-        const elapsedSeconds = Math.floor((now - createdAt) / 1000);
-        const adjustedSecondsLeft = Math.max(0, totalSeconds - elapsedSeconds);
-        setTimeLeft(adjustedSecondsLeft);
-        
-        logger.debug(`Adjusted time left for signal ${signal.id}: ${adjustedSecondsLeft}s`);
-      } else {
-        setTimeLeft(Math.min(secondsLeft, totalSeconds));
+  useEffect(() => {
+    try {
+      // Parse the signal createdAt and expiresAt dates
+      const createdAt = new Date(signal.createdAt);
+      const expiresAt = new Date(signal.expiresAt);
+      const now = new Date();
+      
+      // Store the signal timestamp for display purposes
+      setSignalTimestamp(createdAt);
+      
+      // Check if dates are valid
+      if (isNaN(createdAt.getTime()) || isNaN(expiresAt.getTime())) {
+        logger.error(`Invalid date for signal ${signal.id}: createdAt=${signal.createdAt}, expiresAt=${signal.expiresAt}`);
+        setTimeLeft(0);
+        setIsSignalExpired(true);
+        return;
       }
-    } else {
+      
+      // Check if the signal is already expired (more than 10 minutes old or past expiresAt)
+      const tenMinutesMS = 10 * 60 * 1000;
+      const isCreatedTooOld = (now.getTime() - createdAt.getTime()) > tenMinutesMS;
+      const isPastExpiry = now > expiresAt;
+      
+      if (isCreatedTooOld || isPastExpiry || isOldSignal) {
+        setTimeLeft(0);
+        setIsSignalExpired(true);
+        logger.info(`Signal ${signal.id} for ${signal.token} is expired`, {
+          createdAt: createdAt.toISOString(),
+          expiresAt: expiresAt.toISOString(),
+          now: now.toISOString(),
+          isCreatedTooOld,
+          isPastExpiry,
+          isOldSignal
+        });
+        return;
+      }
+      
+      // Calculate remaining time in seconds
+      const remainingMs = expiresAt.getTime() - now.getTime();
+      const secondsLeft = Math.max(0, Math.floor(remainingMs / 1000));
       setTimeLeft(secondsLeft);
+      
+      // Set up timer to count down
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      
+      timerRef.current = setInterval(() => {
+        setTimeLeft((prevTime) => {
+          if (prevTime <= 1) {
+            // If timer reaches zero, clear the interval and mark as expired
+            if (timerRef.current) {
+              clearInterval(timerRef.current);
+              timerRef.current = null;
+            }
+            setIsSignalExpired(true);
+            return 0;
+          }
+          return prevTime - 1;
+        });
+      }, 1000);
+      
+    } catch (e) {
+      logger.error(`Error setting up signal timer: ${e instanceof Error ? e.message : "Unknown error"}`);
+      setTimeLeft(0);
+      setIsSignalExpired(true);
     }
     
-    // Rest of the timer setup...
-  } catch (e) {
-    logger.error(`Error calculating time left: ${e instanceof Error ? e.message : "Unknown error"}`);
-    setTimeLeft(0);
-  }
-}, [signal.expiresAt, signal.createdAt, signal.id, isOldSignal]);
+    // Cleanup function
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [signal.id, signal.createdAt, signal.expiresAt, isOldSignal]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -107,65 +136,68 @@ useEffect(() => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
- // components/signal-card.tsx - Update the handleAction function
-
-const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number): Promise<void> => {
-  // Ensure signal has a valid ID
-  if (!signal.id) {
-    logger.error("Cannot process action: Signal ID is missing");
-    setError("Invalid signal data. Cannot process action.");
-    return;
-  }
-
-  setIsLoading(true);
-  setError(null);
-  setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip");
-  
-  try {
-    // If not skip and user is not connected, show connect modal by calling onAction
-    if ((action === "accept" || action === "accept-partial") && !exchangeConnected) {
-      // Important: we're passing the same action but not displaying the skip toast when it's a connection request
-      onAction(action, signal.id, percentage);
-      setIsLoading(false);
-      setActionType(null);
+  const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number): Promise<void> => {
+    // If signal is expired, don't allow actions except skip
+    if (isSignalExpired && action !== "skip") {
+      toast.error("This signal has expired and can no longer be executed");
       return;
     }
     
-    // For SELL signals, verify user has the token
-    if (signal.type === "SELL" && (action === "accept" || action === "accept-partial") && !userOwnsToken) {
-      setError(`You don't own any ${signal.token} to sell`);
-      setIsLoading(false);
-      setActionType(null);
+    // Ensure signal has a valid ID
+    if (!signal.id) {
+      logger.error("Cannot process action: Signal ID is missing");
+      setError("Invalid signal data. Cannot process action.");
       return;
     }
+
+    setIsLoading(true);
+    setError(null);
+    setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip");
     
-    // Call the onAction callback provided by parent
-    await onAction(action, signal.id, percentage);
-    
-    // Try to trigger haptic feedback for better UX
     try {
-      telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification");
-    } catch (e) {
-      // Ignore errors with haptics
+      // If not skip and user is not connected, show connect modal by calling onAction
+      if ((action === "accept" || action === "accept-partial") && !exchangeConnected) {
+        onAction(action, signal.id, percentage);
+        setIsLoading(false);
+        setActionType(null);
+        return;
+      }
+      
+      // For SELL signals, verify user has the token
+      if (signal.type === "SELL" && (action === "accept" || action === "accept-partial") && !userOwnsToken) {
+        setError(`You don't own any ${signal.token} to sell`);
+        setIsLoading(false);
+        setActionType(null);
+        return;
+      }
+      
+      // Call the onAction callback provided by parent
+      await onAction(action, signal.id, percentage);
+      
+      // Try to trigger haptic feedback for better UX
+      try {
+        telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification");
+      } catch (e) {
+        // Ignore errors with haptics
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to process action";
+      
+      // Enhance error message for symbol issues
+      if (errorMessage.includes("Invalid symbol") || errorMessage.includes("Invalid trading symbol")) {
+        setError(`${signal.token} is not available on your exchange. This may be a commodity or token that requires a different exchange.`);
+      } else if (errorMessage.includes("Error 400") || errorMessage.includes("API error")) {
+        setError(`Exchange API error: Unable to trade ${signal.token}. This asset may not be supported.`);
+      } else {
+        setError(errorMessage);
+      }
+      
+      logger.error(`Error processing signal action: ${errorMessage}`);
+    } finally {
+      setIsLoading(false);
+      setActionType(null);
     }
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : "Failed to process action";
-    
-    // Enhance error message for symbol issues
-    if (errorMessage.includes("Invalid symbol") || errorMessage.includes("Invalid trading symbol")) {
-      setError(`${signal.token} is not available on your exchange. This may be a commodity or token that requires a different exchange.`);
-    } else if (errorMessage.includes("Error 400") || errorMessage.includes("API error")) {
-      setError(`Exchange API error: Unable to trade ${signal.token}. This asset may not be supported.`);
-    } else {
-      setError(errorMessage);
-    }
-    
-    logger.error(`Error processing signal action: ${errorMessage}`);
-  } finally {
-    setIsLoading(false);
-    setActionType(null);
-  }
-};
+  };
 
   const getRiskColor = (risk: string): string => {
     switch (risk) {
@@ -187,45 +219,39 @@ const handleAction = async (action: "accept" | "skip" | "accept-partial", percen
 
   // Format the received time to show when the signal was created
   const getFormattedTime = (): string => {
+    if (!signalTimestamp) return "Unknown time";
     try {
-      const createdDate = new Date(signal.createdAt);
-      return createdDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return signalTimestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } catch (e) {
       return "Unknown time";
     }
   }
 
- // components/signal-card.tsx - Fix for getTimeSinceReceived function
-const getTimeSinceReceived = (): string => {
-  try {
-    // Make sure created date is valid
-    let createdDate: Date;
-    if (!signal.createdAt || isNaN(new Date(signal.createdAt).getTime())) {
-      // If createdAt is invalid, use current time minus 1 minute as fallback
-      createdDate = new Date(Date.now() - 60000);
-      logger.warn(`Invalid createdAt for signal ${signal.id}, using fallback`);
-    } else {
-      createdDate = new Date(signal.createdAt);
-    }
+  // Get time since the signal was received
+  const getTimeSinceReceived = (): string => {
+    if (!signalTimestamp) return "Unknown time";
     
-    const now = new Date();
-    const diffMs = now.getTime() - createdDate.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    
-    if (diffMins <= 0) {
-      return "Just now"; // For very recent or future timestamps
-    } else if (diffMins < 60) {
-      return `${diffMins}m ago`;
-    } else if (diffMins < 24 * 60) {
-      return `${Math.floor(diffMins / 60)}h ago`;
-    } else {
-      return `${Math.floor(diffMins / (60 * 24))}d ago`;
+    try {
+      const now = new Date();
+      const diffMs = now.getTime() - signalTimestamp.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      
+      if (diffMins < 1) {
+        return "Just now";
+      } else if (diffMins === 1) {
+        return "1m ago";
+      } else if (diffMins < 60) {
+        return `${diffMins}m ago`;
+      } else if (diffMins < 24 * 60) {
+        return `${Math.floor(diffMins / 60)}h ago`;
+      } else {
+        return `${Math.floor(diffMins / (60 * 24))}d ago`;
+      }
+    } catch (e) {
+      logger.error(`Error formatting time: ${e instanceof Error ? e.message : "Unknown error"}`);
+      return "Unknown time";
     }
-  } catch (e) {
-    logger.error(`Error formatting time: ${e instanceof Error ? e.message : "Unknown error"}`);
-    return "Unknown time";
   }
-}
 
   const handleOpenLink = (): void => {
     if (signal.link) {
@@ -283,7 +309,7 @@ const getTimeSinceReceived = (): string => {
           </div>
         )}
 
-        {/* Ekin API specific data */}
+        {/* Signal details section (positives/warnings) */}
         {((signal.positives && signal.positives.length > 0) || (signal.warnings && signal.warnings.length > 0)) && (
           <div className="mt-4">
             <Button
@@ -335,8 +361,8 @@ const getTimeSinceReceived = (): string => {
           </div>
         )}
 
-        {/* Auto-execution timer - Only show if exchange is connected and the signal is not old */}
-        {exchangeConnected && !isOldSignal && (
+        {/* Auto-execution timer - Only show if exchange is connected and the signal is not expired */}
+        {exchangeConnected && !isSignalExpired && (
           <div className="mt-4 relative">
             <div className="flex justify-between text-xs mb-1">
               <span className="font-medium">Auto-execution in {formatTime(timeLeft)}</span>
@@ -371,17 +397,17 @@ const getTimeSinceReceived = (): string => {
           </div>
         )}
         
-        {/* Show timestamp for old signals instead of countdown */}
-        {isOldSignal && (
+        {/* Expired signal banner */}
+        {isSignalExpired && (
           <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-900/20 rounded-md border border-gray-200 dark:border-gray-800">
             <div className="flex items-start">
-              <Info className="h-5 w-5 text-gray-600 dark:text-gray-400 mt-0.5 mr-2 flex-shrink-0" />
+              <AlertCircle className="h-5 w-5 text-gray-600 dark:text-gray-400 mt-0.5 mr-2 flex-shrink-0" />
               <div>
                 <p className="text-sm font-medium text-gray-800 dark:text-gray-300">
                   Signal received at {getFormattedTime()}
                 </p>
                 <p className="text-xs mt-1 text-gray-700 dark:text-gray-400">
-                  This signal was received more than 10 minutes ago. Auto-execution timeout has passed.
+                  This signal has expired. Auto-execution timeout has passed.
                 </p>
               </div>
             </div>
@@ -423,7 +449,7 @@ const getTimeSinceReceived = (): string => {
                       variant={exchangeConnected ? "default" : "default"}
                       className={`w-full ${!exchangeConnected ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
                       onClick={() => handleAction("accept")}
-                      disabled={isLoading}
+                      disabled={isLoading || isSignalExpired}
                     >
                       {isLoading && actionType === "full" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                       {exchangeConnected ? "Buy 10%" : "Connect Exchange"}
@@ -456,7 +482,7 @@ const getTimeSinceReceived = (): string => {
                     variant="default"
                     className="w-full"
                     onClick={() => handleAction("accept")}
-                    disabled={isLoading}
+                    disabled={isLoading || isSignalExpired}
                   >
                     {isLoading && actionType === "full" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                     Sell Fully
@@ -475,7 +501,7 @@ const getTimeSinceReceived = (): string => {
                     variant="outline"
                     className="w-full bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 hover:bg-amber-100"
                     onClick={() => handleAction("accept-partial", 50)}
-                    disabled={isLoading}
+                    disabled={isLoading || isSignalExpired}
                   >
                     {isLoading && actionType === "partial" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                     Sell 50%
