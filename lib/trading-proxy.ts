@@ -353,10 +353,12 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
         throw new Error('Failed to fetch account information');
       }
 
+      // Get current prices for all assets      // Use the working getBalances method to get balances
+      const balances = await this.getBalances(userId);
+      
       // Get current prices for all assets
-      const balances = accountInfo.balances.filter((b: any) => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0);
       const pricePromises = balances.map(async (balance: any) => {
-        if (balance.asset === 'USDT') return 1;
+        if (['USDT', 'BUSD', 'USDC'].includes(balance.asset)) return 1;
         try {
           const price = await this.getPrice(userId, `${balance.asset}USDT`);
           return price;
@@ -376,20 +378,22 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
       for (let i = 0; i < balances.length; i++) {
         const balance = balances[i];
         const price = prices[i];
-        const amount = parseFloat(balance.free) + parseFloat(balance.locked);
-        const value = amount * price;
+        const value = balance.total * price;
 
-        if (balance.asset === 'USDT') {
-          freeCapital = value;
+        if (['USDT', 'BUSD', 'USDC', 'DAI'].includes(balance.asset)) {
+          freeCapital += value;
         } else if (value > 0) {
           holdings.push({
-            token: balance.asset,
-            amount,
-            currentPrice: price,
-            value
+            token: balance.asset,            // Changed from symbol to token
+            amount: balance.total,           // Changed from quantity to amount
+            currentPrice: price,             // Changed from price to currentPrice
+            value: value,
+            pnl: 0,                         // Will be calculated later if needed
+            pnlPercentage: 0                // Will be calculated later if needed
           });
           allocatedCapital += value;
         }
+        totalValue += value;
       }
 
       totalValue = freeCapital + allocatedCapital;

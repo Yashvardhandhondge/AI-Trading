@@ -13,6 +13,7 @@ import {
   ChartOptions,
 } from 'chart.js';
 import { Loader2 } from 'lucide-react';
+import { tradingProxy } from '@/lib/trading-proxy';
 
 // Define chart data type
 interface ChartData {
@@ -49,26 +50,18 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
       try {
         setIsLoading(true);
         setError(null);
-        
-        // Fetch portfolio data from your backend
-        const response = await fetch('/api/portfolio');
-        
-        if (!response.ok) {
-          throw new Error(`Failed to fetch portfolio: ${response.status}`);
-        }
-        
-        const data: { holdings?: Array<{ token: string; amount: number; value: number; averagePrice?: number; currentPrice?: number; pnlPercentage?: number; }>; totalValue?: number; } = await response.json();
+          // Use trading proxy to get portfolio data
+        const data = await tradingProxy.getPortfolio(userId);
         
         // Process holdings to display in the chart
         if (data.holdings && data.holdings.length > 0) {
           // Filter out positions with zero amount and stablecoins
-          const stablecoins = ['USDT', 'USDC', 'BUSD', 'DAI'];
-          const filteredHoldings = data.holdings.filter(
-            h => h.amount > 0 && !stablecoins.includes(h.token)
+          const stablecoins = ['USDT', 'USDC', 'BUSD', 'DAI'];          const filteredHoldings = data.holdings.filter(
+            (h: { token: string; amount: number }) => h.amount > 0 && !stablecoins.includes(h.token)
           );
           
           // Transform for the chart
-          const chartData: ChartData[] = filteredHoldings.map(holding => ({
+          const chartData: ChartData[] = filteredHoldings.map((holding: { token: string; amount: number; value: number; averagePrice?: number; currentPrice?: number; pnlPercentage?: number; }) => ({
             token: holding.token,
             value: holding.value || 0,
             amount: holding.amount,

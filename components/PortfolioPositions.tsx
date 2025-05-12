@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { TrendingUp, TrendingDown, RefreshCw, Loader2 } from 'lucide-react';
 import { formatCurrency } from "@/lib/utils";
+import { tradingProxy } from "@/lib/trading-proxy";
 
 // Define data interfaces
 interface PositionData {
@@ -38,21 +39,14 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
       
       setError(null);
       
-      // Fetch portfolio data from your backend
-      const response = await fetch('/api/portfolio');
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch portfolio: ${response.status}`);
-      }
-      
-      const data: { holdings?: PositionData[] } = await response.json();
+      // Use trading proxy to get portfolio data
+      const data = await tradingProxy.getPortfolio(userId);
       
       // Process holdings to display in the table
       if (data.holdings && data.holdings.length > 0) {
         // Filter out stablecoins
-        const stablecoins = ['USDT', 'USDC', 'BUSD', 'DAI'];
-        const filteredHoldings = data.holdings.filter(
-          h => h.amount > 0 && !stablecoins.includes(h.token)
+        const stablecoins = ['USDT', 'USDC', 'BUSD', 'DAI'];        const filteredHoldings = data.holdings.filter(
+          (h: { token: string; amount: number }) => h.amount > 0 && !stablecoins.includes(h.token)
         );
         
         setPositions(filteredHoldings);

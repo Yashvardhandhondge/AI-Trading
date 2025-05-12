@@ -8,6 +8,7 @@ import { Loader2, TrendingUp, AlertCircle, RefreshCw } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import { logger } from "@/lib/logger"
 import type { SessionUser } from "@/lib/auth"
+import { tradingProxy } from "@/lib/trading-proxy"
 import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
 import PortfolioChart from "./PortfolioChart"
 import PortfolioPositions from "./PortfolioPositions"
@@ -25,8 +26,7 @@ export function ProfitLossView({ user, onSwitchToSettings }: ProfitLossViewProps
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [isRefreshing, setIsRefreshing] = useState(false)
-  
-  // Fetch portfolio data - using useCallback to be able to call it from multiple places
+    // Fetch portfolio data - using useCallback to be able to call it from multiple places
   const fetchPortfolioData = useCallback(async (showLoadingState = true) => {
     try {
       if (showLoadingState) {
@@ -43,15 +43,11 @@ export function ProfitLossView({ user, onSwitchToSettings }: ProfitLossViewProps
         return
       }
       
-      // Fetch portfolio summary
-      const response = await fetch('/api/portfolio/summary')
+      // Use the trading proxy service to get portfolio data
+      const portfolioData = await tradingProxy.getPortfolio(user.id)
       
-      if (!response.ok) {
-        throw new Error(`Failed to fetch portfolio summary: ${response.status}`)
-      }
-      
-      const data = await response.json()
-      setPortfolioData(data)
+      // Update the portfolio state
+      setPortfolioData(portfolioData)
       setLastUpdated(new Date())
       
     } catch (err) {
