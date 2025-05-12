@@ -225,192 +225,191 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
       logger.info(`Executing ${side} trade for ${symbol}`, {
         context: 'TradingProxy',
         userId,
-        data: { symbol, side, quantity }
+        data: { symbol, side, quantity, price }
       });
-  
-      // Resolve the symbol using our mapping
-      const resolvedSymbol = this.resolveSymbol(symbol);
+
+      const response = await fetch(`${this.proxyServerUrl}/api/trade`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userId: userId.toString(),
+          symbol,
+          side,
+          quantity: quantity.toFixed(8),
+          price: price?.toFixed(8),
+          type: price ? 'LIMIT' : 'MARKET'
+        }),
+        signal: AbortSignal.timeout(this.defaultTimeout)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: `HTTP error: ${response.status}` }));
+        throw new Error(errorData.message || `Trade execution failed: ${response.status}`);
+      }
+
+      const result = await response.json();
       
-      // Validate the symbol if it's not the same as the original
-      if (resolvedSymbol !== symbol) {
-        const isValid = await this.validateSymbol(userId, resolvedSymbol);
-        if (!isValid) {
-          logger.error(`Resolved symbol ${resolvedSymbol} is also invalid`);
-          throw new Error(`Invalid trading symbol: ${symbol}. This asset is not available on your exchange.`);
-        }
-      } else {
-        // Validate the original symbol
-        const isValid = await this.validateSymbol(userId, symbol);
-        if (!isValid) {
-          throw new Error(`Invalid trading symbol: ${symbol}. This asset is not available on your exchange.`);
-        }
-      }
-  
-      // Use the resolved symbol for the trade
-      const params: Record<string, any> = {
-        symbol: resolvedSymbol,
-        side,
-        quantity: quantity.toFixed(5),
-        type: price ? 'LIMIT' : 'MARKET',
-      };
-  
-      if (price) {
-        params.price = price.toFixed(2);
-        params.timeInForce = 'GTC'; // Good Till Canceled
-      }
-  
-      const response = await this.executeProxyRequest(userId, '/api/v3/order', 'POST', params);
-  
+      logger.info(`Trade executed successfully for ${symbol}`, {
+        context: 'TradingProxy',
+        userId,
+        data: { orderId: result.orderId }
+      });
+
       return {
-        orderId: response.orderId,
-        symbol: response.symbol,
-        side: response.side,
-        quantity: Number.parseFloat(response.executedQty),
-        price: Number.parseFloat(response.price || response.fills?.[0]?.price || 0),
-        status: response.status,
-        timestamp: response.transactTime,
+        orderId: result.orderId,
+        symbol: result.symbol,
+        side: result.side,
+        quantity: Number(result.executedQty),
+        price: Number(result.price || result.fills?.[0]?.price || 0),
+        status: result.status,
+        timestamp: result.transactTime,
       };
     } catch (error) {
-      logger.error(`Error executing trade: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      logger.error(`Trade execution error: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
     }
   }
 
-  // In your trading-proxy.ts
-public async getUserTrades(userId: string | number, symbol?: string): Promise<any[]> {
-  try {
-    const url = `${this.proxyServerUrl}/api/user/${userId}/trades${symbol ? `?symbol=${symbol}` : ''}`;
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch trades: ${response.status}`);
+  /**
+   * Get user trades
+   */
+  public async getUserTrades(userId: string | number): Promise<any[]> {
+    try {
+      logger.info(`Fetching trades for user ${userId}`, {
+        context: 'TradingProxy'
+      });
+
+      // First check if the API keys are registered
+      const hasKeys = await this.checkApiKeyStatus(userId);
+      if (!hasKeys) {
+        throw new Error('API keys not found or not registered');
+      }
+
+      // Make request to the proxy server
+      const response = await fetch(`${this.proxyServerUrl}/api/trades`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userId: userId.toString(),
+          limit: 100
+        }),
+        signal: AbortSignal.timeout(this.defaultTimeout)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP error: ${response.status}` }));
+        throw new Error(errorData.error || `Failed to fetch trades: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch trades from proxy');
+      }
+
+      // Transform trades to consistent format
+      return (data.trades || []).map((trade: any) => ({
+        id: trade.id,
+        symbol: trade.symbol,
+        token: trade.symbol.replace(/USDT$|BUSD$/, ''),
+        type: trade.isBuyer ? 'BUY' : 'SELL',
+        price: parseFloat(trade.price),
+        amount: parseFloat(trade.qty),
+        time: new Date(trade.time).toISOString(),
+        commission: parseFloat(trade.commission),
+        commissionAsset: trade.commissionAsset,
+        total: (parseFloat(trade.price) * parseFloat(trade.qty)).toFixed(8),
+        isMaker: trade.isMaker
+      }));
+    } catch (error) {
+      logger.error(`Error fetching trades from proxy: ${error instanceof Error ? error.message : "Unknown error"}`);
+      throw error;
     }
-    
-    const data = await response.json();
-    return data.trades;
-  } catch (error) {
-    logger.error(`Error fetching trades: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    throw error;
   }
-}
 
   /**
    * Get portfolio data
    */
   public async getPortfolio(userId: string | number): Promise<any> {
     try {
-      console.log(`[DEBUG] Getting portfolio for user ${userId}`);
-      
-      const proxyServerUrl = process.env.NEXT_PUBLIC_PROXY_SERVER_URL || 'https://binance.yashvardhandhondge.tech';
-      const apiKey = process.env.TRADING_PROXY_API_KEY || '';
-      
-      const response = await fetch(`${proxyServerUrl}/api/user/${userId}/portfolio`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        signal: AbortSignal.timeout(this.defaultTimeout)
+      logger.info(`Getting portfolio for user ${userId}`, {
+        context: 'TradingProxy'
       });
-      
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: `HTTP error: ${response.status}` }));
-        throw new Error(error.message || 'Failed to fetch portfolio');
+
+      // First check if the API keys are registered
+      const hasKeys = await this.checkApiKeyStatus(userId);
+      if (!hasKeys) {
+        throw new Error('API keys not found or not registered');
       }
+
+      // Get account info from Binance
+      const accountInfo = await this.executeProxyRequest(userId, '/api/v3/account');
       
-      const portfolioData = await response.json();
-      console.log(`[DEBUG] TOTAL PORTFOLIO VALUE: ${portfolioData.totalValue} (allocated: ${portfolioData.allocatedCapital} + free: ${portfolioData.freeCapital})`);
-      
+      if (!accountInfo || !accountInfo.balances) {
+        throw new Error('Failed to fetch account information');
+      }
+
+      // Get current prices for all assets
+      const balances = accountInfo.balances.filter((b: any) => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0);
+      const pricePromises = balances.map(async (balance: any) => {
+        if (balance.asset === 'USDT') return 1;
+        try {
+          const price = await this.getPrice(userId, `${balance.asset}USDT`);
+          return price;
+        } catch {
+          return 0;
+        }
+      });
+
+      const prices = await Promise.all(pricePromises);
+
+      // Calculate portfolio values
+      let totalValue = 0;
+      let freeCapital = 0;
+      let allocatedCapital = 0;
+      const holdings = [];
+
+      for (let i = 0; i < balances.length; i++) {
+        const balance = balances[i];
+        const price = prices[i];
+        const amount = parseFloat(balance.free) + parseFloat(balance.locked);
+        const value = amount * price;
+
+        if (balance.asset === 'USDT') {
+          freeCapital = value;
+        } else if (value > 0) {
+          holdings.push({
+            token: balance.asset,
+            amount,
+            currentPrice: price,
+            value
+          });
+          allocatedCapital += value;
+        }
+      }
+
+      totalValue = freeCapital + allocatedCapital;
+
       return {
-        totalValue: portfolioData.totalValue,
-        freeCapital: portfolioData.freeCapital,
-        allocatedCapital: portfolioData.allocatedCapital,
-        holdings: portfolioData.holdings.map((holding: any) => ({
-          token: holding.symbol,
-          amount: holding.quantity,
-          averagePrice: holding.averagePrice || holding.price,
-          currentPrice: holding.price,
-          value: holding.value,
-          pnl: holding.pnl || 0,
-          pnlPercentage: holding.pnlPercentage || 0,
-        })),
-        realizedPnl: portfolioData.realizedPnl || 0,
-        unrealizedPnl: portfolioData.unrealizedPnl || 0
+        totalValue,
+        freeCapital,
+        allocatedCapital,
+        holdings,
+        realizedPnl: 0, // This would need to be calculated from trade history
+        unrealizedPnl: 0 // This would need average entry prices to calculate
       };
     } catch (error) {
-      logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : "Unknown error"}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Get open orders
-   */
-  public async getOpenOrders(userId: string | number, symbol?: string): Promise<any[]> {
-    try {
-      const params: Record<string, any> = {};
-      if (symbol) {
-        params.symbol = symbol;
-      }
-
-      return this.executeProxyRequest(userId, '/api/v3/openOrders', 'GET', params);
-    } catch (error) {
-      logger.error(`Error getting open orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Cancel an order
-   */
-  public async cancelOrder(userId: string | number, symbol: string, orderId: number): Promise<any> {
-    try {
-      return await this.executeProxyRequest(userId, '/api/v3/order', 'DELETE', {
-        symbol,
-        orderId
+      logger.error(`Error fetching portfolio from proxy: ${error instanceof Error ? error.message : "Unknown error"}`, {
+        context: 'TradingProxy',
+        userId
       });
-    } catch (error) {
-      logger.error(`Error canceling order: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     }
   }
-
-  // lib/trading-proxy.ts
-
-// Add symbol validation method
-public async validateSymbol(userId: string | number, symbol: string): Promise<boolean> {
-  try {
-    // Get exchange info from Binance
-    const exchangeInfo = await this.executeProxyRequest(userId, '/api/v3/exchangeInfo');
-    
-    // Check if the symbol exists in the exchange info
-    return exchangeInfo.symbols.some((s: any) => s.symbol === symbol);
-  } catch (error) {
-    logger.error(`Error validating symbol ${symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    return false;
-  }
-}
-
-// Add symbol resolution for commodities and other special cases
-private symbolMap: Record<string, string> = {
-  'GOLDUSDT': 'PAXGUSDT',  // Map Gold to Paxos Gold
-  'SILVERUSDT': 'XAGUSDT', // Map Silver to a silver token if available
-  // Add other mappings as needed
-};
-
-private resolveSymbol(symbol: string): string {
-  // Check if we have a direct mapping for this symbol
-  if (this.symbolMap[symbol]) {
-    logger.info(`Resolving ${symbol} to ${this.symbolMap[symbol]}`);
-    return this.symbolMap[symbol];
-  }
-  
-  // Otherwise return the original symbol
-  return symbol;
-}
-
-// Update executeTrade method to use symbol validation and resolution
-
 
   /**
    * Mock portfolio data for development

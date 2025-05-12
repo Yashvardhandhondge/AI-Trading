@@ -10,11 +10,11 @@ export class TradeSyncService {
     forceSync?: boolean;
   }) {
     try {
-      const { symbol, limit = 100, forceSync = false } = options || {}
+      const { limit = 100, forceSync = false } = options || {}
       
       logger.info(`Starting trade sync for user ${userId}`, {
         context: "TradeSyncService",
-        data: { symbol, limit, forceSync }
+        data: { limit, forceSync }
       })
 
       // Connect to database
@@ -44,7 +44,7 @@ export class TradeSyncService {
       }
 
       // Fetch trades from trading proxy
-      const binanceTrades = await tradingProxy.getUserTrades(userId, symbol)
+      const binanceTrades = await tradingProxy.getUserTrades(userId) // Remove the symbol parameter
       
       if (!binanceTrades || binanceTrades.length === 0) {
         logger.info("No new trades to sync", {
@@ -76,10 +76,10 @@ export class TradeSyncService {
           // Create new trade record
           await models.Trade.create({
             userId: user._id,
-            type: trade.isBuyer ? "BUY" : "SELL",
+            type: trade.tradeType, // Updated to use tradeType from response
             token,
             price: trade.price,
-            amount: trade.qty,
+            amount: trade.quantity,
             status: "completed",
             autoExecuted: false,
             exchangeTradeId: trade.id.toString(),
@@ -89,7 +89,8 @@ export class TradeSyncService {
               commission: trade.commission,
               commissionAsset: trade.commissionAsset,
               isMaker: trade.isMaker,
-              quoteQty: trade.quoteQty
+              quoteQty: trade.quoteQuantity,
+              total: trade.total
             }
           })
           

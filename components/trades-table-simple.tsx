@@ -17,6 +17,12 @@ interface Trade {
   status: string
   autoExecuted: boolean
   exchangeTradeId?: string
+  metadata?: {
+    commission?: number
+    commissionAsset?: string
+    total?: string
+    isMaker?: boolean
+  }
 }
 
 interface TradesTableProps {
@@ -187,12 +193,24 @@ export function TradesTableSimple({ userId }: TradesTableProps) {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-sm">{formatCurrency(trade.price)}</td>
-                    <td className="py-3 px-4 text-sm">{trade.amount.toFixed(6)}</td>
+                    <td className="py-3 px-4 text-sm">
+                      {trade.amount.toFixed(6)}
+                      {trade.metadata?.commission && (
+                        <span className="text-xs text-muted-foreground ml-1">
+                          (Fee: {trade.metadata.commission} {trade.metadata.commissionAsset})
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3 px-4 text-sm">
                       {new Date(trade.createdAt).toLocaleString()}
                     </td>
                     <td className="py-3 px-4 text-sm">
                       {trade.autoExecuted ? "Auto" : trade.exchangeTradeId ? "Binance" : "Signal"}
+                      {trade.metadata?.isMaker && (
+                        <span className="text-xs bg-blue-100 text-blue-800 ml-1 px-1 rounded">
+                          Maker
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
