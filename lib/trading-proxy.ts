@@ -403,10 +403,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
         unrealizedPnl: 0 // This would need average entry prices to calculate
       };
     } catch (error) {
-      logger.error(`Error fetching portfolio from proxy: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        context: 'TradingProxy',
-        userId
-      });
+      logger.error(`Error fetching portfolio from proxy: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
     }
   }
