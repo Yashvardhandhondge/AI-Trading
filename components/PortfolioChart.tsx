@@ -1,5 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip as ChartTooltip,
+  Legend as ChartLegend,
+  Filler,
+  ChartOptions,
+} from 'chart.js';
 import { Loader2 } from 'lucide-react';
 
 // Define chart data type
@@ -13,11 +25,24 @@ interface ChartData {
   color: string;
 }
 
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  ChartTooltip,
+  ChartLegend,
+  Filler
+);
+
 // Typing the component props and state
 const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
   const [positions, setPositions] = useState<ChartData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [chartData, setChartData] = useState<any>(null);
 
   useEffect(() => {
     const fetchPositions = async () => {
@@ -74,29 +99,50 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
     return () => clearInterval(intervalId);
   }, [userId]);
   
-  // Custom tooltip to show more details
-  // Tooltip props
-  interface CustomTooltipProps {
-    active?: boolean;
-    payload?: Array<{ payload: ChartData }>;
-  }
-  const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <div className="bg-white dark:bg-gray-800 p-3 border rounded shadow-lg">
-          <p className="font-bold">{data.token}</p>
-          <p>Amount: {data.amount.toFixed(6)}</p>
-          <p>Value: ${data.value.toFixed(2)}</p>
-          <p>Entry: ${data.entryPrice.toFixed(2)}</p>
-          <p>Current: ${data.currentPrice.toFixed(2)}</p>
-          <p className={data.pnlPercentage >= 0 ? "text-green-500" : "text-red-500"}>
-            P&L: {data.pnlPercentage.toFixed(2)}%
-          </p>
-        </div>
-      );
+  // Transform positions into Chart.js data
+  useEffect(() => {
+    if (positions.length > 0) {
+      const labels = positions.map(p => p.token);
+      const values = positions.map(p => p.value);
+      const change = values[values.length - 1] - values[0];
+      const borderColor = change >= 0 ? '#10b981' : '#ef4444';
+      setChartData({
+        labels,
+        datasets: [
+          {
+            label: 'Position Value',
+            data: values,
+            borderColor,
+            backgroundColor: borderColor === '#10b981' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            pointHoverRadius: 6,
+          },
+        ],
+      });
+    } else {
+      setChartData(null);
     }
-    return null;
+  }, [positions]);
+  
+  // Chart options
+  const chartOptions: ChartOptions<'line'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        titleColor: '#fff',
+        bodyColor: '#fff',
+        callbacks: { label: ctx => `$${ctx.parsed.y.toFixed(2)}` }
+      }
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { color: '#6b7280' } },
+      y: { grid: { color: 'rgba(156,163,175,0.2)' }, ticks: { color: '#6b7280' } }
+    }
   };
   
   if (isLoading) {
@@ -125,20 +171,9 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
   }
   
   return (
-    <ResponsiveContainer width="100%" height={300}>
-      <BarChart data={positions} margin={{ top: 20, right: 30, left: 20, bottom: 40 }}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-        <XAxis dataKey="token" angle={-45} textAnchor="end" height={60} />
-        <YAxis label={{ value: 'Value ($)', angle: -90, position: 'insideLeft' }} />
-        <Tooltip content={<CustomTooltip />} />
-        <Legend />
-        <Bar dataKey="value" name="Position Value" radius={[4, 4, 0, 0]}>
-          {positions.map((entry, index) => (
-            <Cell key={`cell-${index}`} fill={entry.color} />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <div className="h-80">
+      {chartData && <Line data={chartData} options={chartOptions} />}
+    </div>
   );
 };
 
