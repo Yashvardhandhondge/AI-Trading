@@ -159,13 +159,15 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
             lastChecked: new Date()
           })
           
-          // Call the onUpdateSuccess callback to refresh parent components
-          if (onUpdateSuccess) {
-            setTimeout(() => onUpdateSuccess(), 1000)
-          } else {
-            // Fallback to refreshing the page
-            setTimeout(() => router.refresh(), 1500)
-          }
+          // Add longer delay to ensure database and session are updated
+          setTimeout(() => {
+            if (onUpdateSuccess) {
+              onUpdateSuccess()
+            } else {
+              // Fallback to refreshing the page
+              router.refresh()
+            }
+          }, 1500)
         } catch (proxyError) {
           throw new Error(proxyError instanceof Error ? proxyError.message : "Failed to register with proxy server")
         }

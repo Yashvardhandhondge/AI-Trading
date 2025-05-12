@@ -143,7 +143,14 @@ export function MainApp() {
   // Refresh user data (useful after connecting exchange)
   const refreshUserData = async () => {
     try {
-      const response = await fetch("/api/user")
+      // Clear any cached response
+      const response = await fetch("/api/user", {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
+      })
+      
       if (response.ok) {
         const userData = await response.json()
         setUser(userData)

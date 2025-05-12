@@ -1,6 +1,6 @@
 // app/api/exchange/connect/route.ts
 import { type NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/auth";
+import { getSessionUser, createSessionToken, setSessionCookie, type SessionUser } from "@/lib/auth";
 import { connectToDatabase, models } from "@/lib/db";
 import { logger } from "@/lib/logger";
 
@@ -49,15 +49,29 @@ export async function POST(request: NextRequest) {
     
     await user.save();
     
+    // Create updated session user with new exchange connection status
+    const updatedSessionUser: SessionUser = {
+      ...sessionUser,
+      exchange: user.exchange,
+      exchangeConnected: true,
+      riskLevel: user.riskLevel
+    };
+    
+    // Create new session token with updated data
+    const newToken = await createSessionToken(updatedSessionUser);
+    
     logger.info("User exchange connection updated successfully", {
       context: "ExchangeConnect",
       userId: sessionUser.id
     });
     
-    return NextResponse.json({ 
+    // Return response with updated session cookie
+    const response = NextResponse.json({ 
       success: true,
       message: "Exchange connection updated successfully"
     });
+    
+    return setSessionCookie(newToken, response);
   } catch (error) {
     logger.error(`Error in exchange connection: ${error instanceof Error ? error.message : 'Unknown error'}`);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
