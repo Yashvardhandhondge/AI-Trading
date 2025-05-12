@@ -66,12 +66,15 @@ const userSchema = new mongoose.Schema({
   apiKey: { type: String },
   apiSecret: { type: String },
   riskLevel: { type: String, enum: ["low", "medium", "high"], default: "medium" },
-  lastSignalTokens: [
-    {
-      token: String,
-      timestamp: Date,
-    },
-  ],
+  lastSignalTokens: {
+    type: [
+      {
+        token: String,
+        timestamp: Date,
+      },
+    ],
+    default: [], // Added default value
+  },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
   isAdmin: { type: Boolean, default: false },
@@ -183,7 +186,7 @@ interface UserDocument extends mongoose.Document {
   apiKey?: string;
   apiSecret?: string;
   riskLevel?: "low" | "medium" | "high";
-  lastSignalTokens?: { token: string; timestamp: Date }[];
+  lastSignalTokens: { token: string; timestamp: Date }[]; // Changed from optional to required
   createdAt?: Date;
   updatedAt?: Date;
   isAdmin?: boolean; 
