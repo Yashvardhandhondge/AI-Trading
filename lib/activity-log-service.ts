@@ -75,10 +75,7 @@ export class ActivityLogService {
         throw new Error(`Activity log with ID ${id} not found`)
       }
       
-      logger.info(`Updated activity log: ${id}`, {
-        context: "ActivityLog",
-        updates
-      })
+      logger.info(`Updated activity log: ${id}`)
       
       return updatedLog
     } catch (error) {
