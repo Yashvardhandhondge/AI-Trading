@@ -57,7 +57,7 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
           throw new Error(`Failed to fetch portfolio: ${response.status}`);
         }
         
-        const data: { holdings?: Array<{ token: string; amount: number; value: number; averagePrice?: number; currentPrice?: number; pnlPercentage?: number; }>; } = await response.json();
+        const data: { holdings?: Array<{ token: string; amount: number; value: number; averagePrice?: number; currentPrice?: number; pnlPercentage?: number; }>; totalValue?: number; } = await response.json();
         
         // Process holdings to display in the chart
         if (data.holdings && data.holdings.length > 0) {
@@ -102,27 +102,61 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
   // Transform positions into Chart.js data
   useEffect(() => {
     if (positions.length > 0) {
-      const labels = positions.map(p => p.token);
-      const values = positions.map(p => p.value);
-      // Calculate change based on the first and last value if available, otherwise default to 0
-      const change = values.length > 1 ? values[values.length - 1] - values[0] : 0;
-      const borderColor = change >= 0 ? '#10b981' : '#ef4444';
-      setChartData({
-        labels,
-        datasets: [
-          {
-            label: 'Position Value',
-            data: values,
-            borderColor,
-            backgroundColor: borderColor === '#10b981' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-            fill: true,
-            tension: 0.3,
-            pointRadius: 3, // Changed from 0 to make points visible
-            pointHoverRadius: 6,
-            pointHitRadius: 10, // Increase hit radius for easier interaction
-          },
-        ],
-      });
+      // For a single position, we'll create a bar chart or display as point
+      if (positions.length === 1) {
+        const pos = positions[0];
+        // Create data points: zero and current value
+        const labels = ['', pos.token];
+        const values = [0, pos.value];
+        
+        const borderColor = pos.pnlPercentage >= 0 ? '#10b981' : '#ef4444';
+        setChartData({
+          labels,
+          datasets: [
+            {
+              label: 'Position Value',
+              data: values,
+              borderColor,
+              backgroundColor: borderColor === '#10b981' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+              fill: true,
+              tension: 0.1,
+              pointRadius: [0, 6], // Hide the zero point, show the value point
+              pointHoverRadius: [0, 8],
+              pointBackgroundColor: borderColor,
+              pointBorderColor: borderColor,
+              pointBorderWidth: 2,
+            },
+          ],
+        });
+      } else {
+        // Multiple positions - display normally
+        const labels = positions.map(p => p.token);
+        const values = positions.map(p => p.value);
+        
+        // Calculate overall trend
+        const totalPnl = positions.reduce((sum, p) => sum + (p.pnlPercentage || 0), 0) / positions.length;
+        const borderColor = totalPnl >= 0 ? '#10b981' : '#ef4444';
+        
+        setChartData({
+          labels,
+          datasets: [
+            {
+              label: 'Position Value',
+              data: values,
+              borderColor,
+              backgroundColor: borderColor === '#10b981' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+              fill: true,
+              tension: 0.3,
+              pointRadius: 3,
+              pointHoverRadius: 6,
+              pointHitRadius: 10,
+              pointBackgroundColor: borderColor,
+              pointBorderColor: borderColor,
+              pointBorderWidth: 2,
+            },
+          ],
+        });
+      }
     } else {
       setChartData(null);
     }
@@ -138,16 +172,50 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
         backgroundColor: 'rgba(0,0,0,0.8)',
         titleColor: '#fff',
         bodyColor: '#fff',
-        callbacks: { label: ctx => `$${ctx.parsed.y.toFixed(2)}` }
+        borderColor: 'rgba(255,255,255,0.3)',
+        borderWidth: 1,
+        cornerRadius: 4,
+        callbacks: { 
+          label: (ctx) => {
+            const value = ctx.parsed.y;
+            const label = ctx.dataset.label || '';
+            return `${label}: $${value.toFixed(2)}`;
+          },
+          title: (ctx) => {
+            // Don't show empty title for the zero point
+            return ctx[0].label || '';
+          }
+        },
+        displayColors: false,
       }
     },
     scales: {
-      x: { grid: { display: false }, ticks: { color: '#6b7280' } },
+      x: { 
+        grid: { display: false }, 
+        ticks: { 
+          color: '#6b7280',
+          // Hide the empty label for single position
+          callback: function(value, index, values) {
+            const label = this.getLabelForValue(value as number);
+            return label || '';
+          }
+        } 
+      },
       y: { 
         grid: { color: 'rgba(156,163,175,0.2)' }, 
-        ticks: { color: '#6b7280' },
-        beginAtZero: true // Ensure y-axis starts at 0
+        ticks: { 
+          color: '#6b7280',
+          callback: function(value) {
+            return '$' + (typeof value === 'number' ? value.toFixed(0) : value);
+          }
+        },
+        beginAtZero: true, // Always start from zero
+        suggestedMax: positions.length === 1 && positions[0] ? positions[0].value * 1.2 : undefined, // Add some padding for single position
       }
+    },
+    interaction: {
+      mode: 'point',
+      intersect: false,
     }
   };
   
@@ -177,8 +245,23 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
   }
   
   return (
-    <div className="h-80">
-      {chartData && <Line data={chartData} options={chartOptions} />}
+    <div className="relative">
+      <div className="h-80">
+        {chartData && <Line data={chartData} options={chartOptions} />}
+      </div>
+      
+      {/* Add a summary below the chart */}
+      <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
+        {positions.map((pos) => (
+          <div key={pos.token} className="text-center">
+            <div className="font-medium">{pos.token}</div>
+            <div className="text-muted-foreground">${pos.value.toFixed(2)}</div>
+            <div className={pos.pnlPercentage >= 0 ? 'text-green-500' : 'text-red-500'}>
+              {pos.pnlPercentage >= 0 ? '+' : ''}{pos.pnlPercentage.toFixed(2)}%
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
