@@ -185,8 +185,8 @@ interface UserDocument extends mongoose.Document {
   exchangeConnected?: boolean;
   apiKey?: string;
   apiSecret?: string;
-  riskLevel?: "low" | "medium" | "high";
-  lastSignalTokens: { token: string; timestamp: Date }[]; // Changed from optional to required
+  riskLevel: "low" | "medium" | "high"; // Changed from optional to required
+  lastSignalTokens: { token: string; timestamp: Date }[]; 
   createdAt?: Date;
   updatedAt?: Date;
   isAdmin?: boolean; 
