@@ -12,6 +12,11 @@ export class TradeSyncService {
     try {
       const { symbol, limit = 100, forceSync = false } = options || {}
       
+      logger.info(`Starting trade sync for user ${userId}`, {
+        context: "TradeSyncService",
+        data: { symbol, limit, forceSync }
+      })
+
       // Connect to database
       await connectToDatabase()
       
@@ -19,32 +24,32 @@ export class TradeSyncService {
       const user = await models.User.findOne({ telegramId: userId })
       
       if (!user || !user.exchangeConnected) {
-        logger.warn(`User ${userId} not found or exchange not connected`)
+        logger.warn(`User ${userId} not found or exchange not connected`, {
+          context: "TradeSyncService"
+        })
         return { synced: 0, error: "Exchange not connected" }
       }
-      
+
       // Check last sync time (don't sync too frequently unless forced)
-      if (!forceSync) {
-        const lastSync = user.lastTradeSync || new Date(0)
-        const timeSinceSync = Date.now() - lastSync.getTime()
+      if (!forceSync && user.lastTradeSync) {
+        const timeSinceSync = Date.now() - user.lastTradeSync.getTime()
         const MIN_SYNC_INTERVAL = 5 * 60 * 1000 // 5 minutes
         
         if (timeSinceSync < MIN_SYNC_INTERVAL) {
-          logger.info(`Skipping sync - last sync was ${timeSinceSync / 1000}s ago`)
+          logger.info(`Skipping sync - last sync was ${timeSinceSync / 1000}s ago`, {
+            context: "TradeSyncService"
+          })
           return { synced: 0, skipped: true }
         }
       }
-      
-      logger.info(`Starting trade sync for user ${userId}`, {
-        context: "TradeSyncService",
-        data: { symbol, limit }
-      })
-      
-      // Fetch trades from Binance
+
+      // Fetch trades from trading proxy
       const binanceTrades = await tradingProxy.getUserTrades(userId, symbol)
       
       if (!binanceTrades || binanceTrades.length === 0) {
-        logger.info("No trades to sync")
+        logger.info("No new trades to sync", {
+          context: "TradeSyncService"
+        })
         return { synced: 0 }
       }
       

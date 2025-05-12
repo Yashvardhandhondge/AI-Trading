@@ -36,6 +36,7 @@ export function TradesTableSimple({ userId }: TradesTableProps) {
       setIsLoading(true)
       setError(null)
       
+      // Use the new API endpoint
       const url = `/api/trades${forceSync ? '?forceSync=true' : ''}`
       const response = await fetch(url)
       
@@ -63,12 +64,13 @@ export function TradesTableSimple({ userId }: TradesTableProps) {
   const handleManualSync = async () => {
     setIsSyncing(true)
     try {
+      // Use the new API endpoint
       const response = await fetch('/api/trades', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ limit: 100 })
+        body: JSON.stringify({ limit: 100, forceSync: true })
       })
       
       if (!response.ok) {
