@@ -221,7 +221,7 @@ export function MainApp() {
           <TabsContent value="pnl" className="flex-1 p-0">
             <ProfitLossView 
               user={user} 
-              onSwitchToSettings={() => setActiveTab("settings")} 
+              onSwitchToSettings={() => setActiveTab("settings")}
             />
           </TabsContent>
           

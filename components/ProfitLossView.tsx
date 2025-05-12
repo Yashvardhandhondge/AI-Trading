@@ -66,30 +66,30 @@ export function ProfitLossView({ user, onSwitchToSettings }: ProfitLossViewProps
   
   // Initial data load and periodic refresh
   useEffect(() => {
-    fetchPortfolioData()
-    
-    // Set up polling to refresh data every 30 seconds
-    const refreshInterval = setInterval(() => {
-      fetchPortfolioData(false)
-    }, 30000)
-    
-    // Clean up the interval when component unmounts
-    return () => clearInterval(refreshInterval)
-  }, [fetchPortfolioData])
-  
-  // Handle manual refresh
-  const handleRefresh = () => {
-    fetchPortfolioData(false)
-  }
-  
-  if (!user.exchangeConnected) {
+    if (user.exchangeConnected) {
+      fetchPortfolioData()
+      
+      // Set up polling to refresh data every 30 seconds
+      const refreshInterval = setInterval(() => {
+        fetchPortfolioData(false)
+      }, 30000)
+      
+      // Clean up the interval when component unmounts
+      return () => clearInterval(refreshInterval)
+    }
+  }, [user.exchangeConnected, fetchPortfolioData])
+
+  // Update the connection check to use the updated user prop
+  if (!user?.exchangeConnected) {
     return (
       <div className="container mx-auto p-4 pb-20">
         <h2 className="text-xl font-bold mb-4">Profit & Loss</h2>
         <Card>
           <CardContent className="p-6 text-center">
             <p className="text-muted-foreground mb-4">Connect your exchange to view profit and loss data</p>
-            <Button onClick={onSwitchToSettings}>Connect Exchange</Button>
+            {onSwitchToSettings && (
+              <Button onClick={onSwitchToSettings}>Connect Exchange</Button>
+            )}
           </CardContent>
         </Card>
       </div>
