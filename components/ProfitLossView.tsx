@@ -14,10 +14,11 @@ import PortfolioPositions from "./PortfolioPositions"
 import { TradesTableSimple } from "./trades-table-simple" // Import TradesTableSimple
 
 interface ProfitLossViewProps {
-  user: SessionUser
+  user: SessionUser;
+  onSwitchToSettings?: () => void; // Add this prop
 }
 
-export function ProfitLossView({ user }: ProfitLossViewProps) {
+export function ProfitLossView({ user, onSwitchToSettings }: ProfitLossViewProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [portfolioData, setPortfolioData] = useState<any>(null)
   const [activeTab, setActiveTab] = useState("positions")
@@ -85,10 +86,10 @@ export function ProfitLossView({ user }: ProfitLossViewProps) {
     return (
       <div className="container mx-auto p-4 pb-20">
         <h2 className="text-xl font-bold mb-4">Profit & Loss</h2>
-        <ExchangeConnectionBanner />
         <Card>
           <CardContent className="p-6 text-center">
-            <p className="text-muted-foreground">Connect your exchange to view profit and loss data</p>
+            <p className="text-muted-foreground mb-4">Connect your exchange to view profit and loss data</p>
+            <Button onClick={onSwitchToSettings}>Connect Exchange</Button>
           </CardContent>
         </Card>
       </div>

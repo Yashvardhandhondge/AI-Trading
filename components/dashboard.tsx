@@ -490,6 +490,25 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
     )
   }
   
+  if (!user.exchangeConnected) {
+    return (
+      <div className="container mx-auto p-4 pb-20">
+        <h2 className="text-xl font-bold mb-4">Trading Dashboard</h2>
+        <Card>
+          <CardContent className="p-6 text-center">
+            <p className="text-muted-foreground mb-4">Connect your exchange to start trading</p>
+            <Button 
+              onClick={() => onSwitchToSettings && onSwitchToSettings()}
+              className="w-full sm:w-auto"
+            >
+              Connect Exchange
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+  
   return (
     <div className="container mx-auto p-4 pb-20">
       <div className="flex justify-between items-center mb-4">
