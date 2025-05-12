@@ -409,6 +409,22 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
   }
 
   /**
+   * Validate if a symbol exists on the exchange
+   */
+  public async validateSymbol(userId: string | number, symbol: string): Promise<boolean> {
+    try {
+      // Get exchange info from Binance
+      const exchangeInfo = await this.executeProxyRequest(userId, '/api/v3/exchangeInfo');
+      
+      // Check if the symbol exists in the exchange info
+      return exchangeInfo.symbols.some((s: any) => s.symbol === symbol);
+    } catch (error) {
+      logger.error(`Error validating symbol ${symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return false;
+    }
+  }
+
+  /**
    * Mock portfolio data for development
    */
   private getMockPortfolio(): any {
