@@ -113,7 +113,7 @@ const cycleSchema = new mongoose.Schema({
   entryTrade: { type: mongoose.Schema.Types.ObjectId, ref: "Trade" },
   exitTrade: { type: mongoose.Schema.Types.ObjectId, ref: "Trade" },
   state: { type: String, enum: ["entry", "hold", "exit", "completed"], default: "entry" },
-  entryPrice: { type: Number },
+  entryPrice: { type: Number, required: true }, // Made entryPrice required
   exitPrice: { type: Number },
   pnl: { type: Number },
   pnlPercentage: { type: Number },
@@ -226,7 +226,7 @@ interface CycleDocument extends mongoose.Document {
   entryTrade?: mongoose.Schema.Types.ObjectId;
   exitTrade?: mongoose.Schema.Types.ObjectId;
   state?: "entry" | "hold" | "exit" | "completed";
-  entryPrice?: number;
+  entryPrice: number; // Changed from optional to required
   exitPrice?: number;
   pnl?: number;
   pnlPercentage?: number;
