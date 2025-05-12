@@ -175,6 +175,7 @@ function defineModel<T extends mongoose.Document>(modelName: string, schema: mon
 // Define interfaces for Document types if not already available
 // (These are examples, adjust them based on your actual schema definitions if needed for type safety with defineModel)
 interface UserDocument extends mongoose.Document {
+  _id: mongoose.Types.ObjectId; // Explicit _id
   telegramId: number;
   username?: string;
   firstName?: string;
@@ -185,13 +186,14 @@ interface UserDocument extends mongoose.Document {
   exchangeConnected?: boolean;
   apiKey?: string;
   apiSecret?: string;
-  riskLevel: "low" | "medium" | "high"; // Changed from optional to required
+  riskLevel: "low" | "medium" | "high"; 
   lastSignalTokens: { token: string; timestamp: Date }[]; 
   createdAt?: Date;
   updatedAt?: Date;
   isAdmin?: boolean; 
 }
 interface SignalDocument extends mongoose.Document {
+  _id: mongoose.Types.ObjectId; // Explicit _id
   type: "BUY" | "SELL";
   token: string;
   price: number;
@@ -205,6 +207,7 @@ interface SignalDocument extends mongoose.Document {
   warning_count?: number;
 }
 interface TradeDocument extends mongoose.Document {
+  _id: mongoose.Types.ObjectId; // Explicit _id
   userId: mongoose.Schema.Types.ObjectId;
   signalId?: mongoose.Schema.Types.ObjectId;
   cycleId?: mongoose.Schema.Types.ObjectId;
@@ -217,6 +220,7 @@ interface TradeDocument extends mongoose.Document {
   createdAt?: Date;
 }
 interface CycleDocument extends mongoose.Document {
+  _id: mongoose.Types.ObjectId; // Explicit _id
   userId: mongoose.Schema.Types.ObjectId;
   token: string;
   entryTrade?: mongoose.Schema.Types.ObjectId;
@@ -231,6 +235,7 @@ interface CycleDocument extends mongoose.Document {
   updatedAt?: Date;
 }
 interface PortfolioDocument extends mongoose.Document {
+  _id: mongoose.Types.ObjectId; // Explicit _id
   userId: mongoose.Schema.Types.ObjectId;
   totalValue?: number;
   freeCapital?: number;
@@ -249,6 +254,7 @@ interface PortfolioDocument extends mongoose.Document {
   updatedAt?: Date;
 }
 interface NotificationDocument extends mongoose.Document {
+  _id: mongoose.Types.ObjectId; // Explicit _id
   userId: mongoose.Schema.Types.ObjectId;
   type: "signal" | "trade" | "cycle" | "system";
   message: string;
