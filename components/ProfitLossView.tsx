@@ -11,6 +11,7 @@ import type { SessionUser } from "@/lib/auth"
 import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
 import PortfolioChart from "./PortfolioChart"
 import PortfolioPositions from "./PortfolioPositions"
+import { TradesTableSimple } from "./trades-table-simple" // Import TradesTableSimple
 
 interface ProfitLossViewProps {
   user: SessionUser
@@ -211,101 +212,12 @@ export function ProfitLossView({ user }: ProfitLossViewProps) {
               <CardTitle>Recent Trades</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <TradesTable userId={user.id} />
+              {/* Replace local TradesTable with TradesTableSimple */}
+              <TradesTableSimple userId={user.id} />
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-    </div>
-  )
-}
-
-// Component for displaying recent trades
-function TradesTable({ userId }: { userId: number | string }) {
-  const [trades, setTrades] = useState<any[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  
-  useEffect(() => {
-    const fetchTrades = async () => {
-      try {
-        setIsLoading(true)
-        
-        const response = await fetch(`/api/users/${userId}/trades`)
-        
-        if (!response.ok) {
-          throw new Error(`Failed to fetch trades: ${response.status}`)
-        }
-        
-        const data = await response.json()
-        setTrades(data.trades || [])
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Failed to load trades"
-        setError(errorMessage)
-        logger.error(`Error fetching trades: ${errorMessage}`)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    
-    fetchTrades()
-  }, [userId])
-  
-  if (isLoading) {
-    return (
-      <div className="flex justify-center items-center p-8">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        <span className="ml-2">Loading trades...</span>
-      </div>
-    )
-  }
-  
-  if (error) {
-    return (
-      <div className="p-4 text-red-500">
-        Error: {error}
-      </div>
-    )
-  }
-  
-  if (trades.length === 0) {
-    return (
-      <div className="p-6 text-center text-muted-foreground">
-        No recent trades found
-      </div>
-    )
-  }
-  
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead className="bg-muted/50">
-          <tr>
-            <th className="py-3 px-4 text-left text-sm font-medium">Token</th>
-            <th className="py-3 px-4 text-left text-sm font-medium">Type</th>
-            <th className="py-3 px-4 text-left text-sm font-medium">Price</th>
-            <th className="py-3 px-4 text-left text-sm font-medium">Amount</th>
-            <th className="py-3 px-4 text-left text-sm font-medium">Time</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {trades.map((trade) => (
-            <tr key={trade.id}>
-              <td className="py-3 px-4 text-sm">{trade.token}</td>
-              <td className="py-3 px-4 text-sm">
-                <span className={trade.type === "BUY" ? "text-green-500" : "text-red-500"}>
-                  {trade.type}
-                </span>
-              </td>
-              <td className="py-3 px-4 text-sm">{formatCurrency(trade.price)}</td>
-              <td className="py-3 px-4 text-sm">{trade.amount.toFixed(6)}</td>
-              <td className="py-3 px-4 text-sm">
-                {new Date(trade.timestamp).toLocaleString()}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }

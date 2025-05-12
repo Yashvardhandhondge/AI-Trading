@@ -276,6 +276,24 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
     }
   }
 
+  // In your trading-proxy.ts
+public async getUserTrades(userId: string | number, symbol?: string): Promise<any[]> {
+  try {
+    const url = `${this.proxyServerUrl}/api/user/${userId}/trades${symbol ? `?symbol=${symbol}` : ''}`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch trades: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.trades;
+  } catch (error) {
+    logger.error(`Error fetching trades: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw error;
+  }
+}
+
   /**
    * Get portfolio data
    */

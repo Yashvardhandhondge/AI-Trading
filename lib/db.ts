@@ -78,6 +78,7 @@ const userSchema = new mongoose.Schema({
     ],
     default: [], // Added default value
   },
+  lastTradeSync: { type: Date }, // Added field
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
   isAdmin: { type: Boolean, default: false },
@@ -107,6 +108,8 @@ const tradeSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   status: { type: String, enum: ["pending", "completed", "failed"], default: "pending" },
   autoExecuted: { type: Boolean, default: false },
+  exchangeTradeId: { type: String, index: true }, // Added field
+  metadata: { type: mongoose.Schema.Types.Mixed }, // Added field
   createdAt: { type: Date, default: Date.now },
 })
 
@@ -204,9 +207,10 @@ export interface UserDocument extends mongoose.Document {
   apiSecret?: string; 
   apiKeyStoredExternally?: boolean; 
   proxyUserId?: string; 
-  autoTradeEnabled: boolean; // Added property, required due to schema default
+  autoTradeEnabled: boolean; 
   riskLevel: "low" | "medium" | "high"; 
   lastSignalTokens: { token: string; timestamp: Date }[]; 
+  lastTradeSync?: Date; // Added property
   createdAt?: Date;
   updatedAt?: Date;
   isAdmin?: boolean; 
@@ -236,6 +240,8 @@ export interface TradeDocument extends mongoose.Document {
   amount: number;
   status?: "pending" | "completed" | "failed";
   autoExecuted?: boolean;
+  exchangeTradeId?: string; // Added property
+  metadata?: any; // Added property, consider defining a more specific type if structure is known
   createdAt?: Date;
 }
 export interface PartialExitDocument {
