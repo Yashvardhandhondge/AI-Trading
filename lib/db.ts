@@ -173,27 +173,85 @@ function defineModel<T extends mongoose.Document>(modelName: string, schema: mon
 // (These are examples, adjust them based on your actual schema definitions if needed for type safety with defineModel)
 interface UserDocument extends mongoose.Document {
   telegramId: number;
-  // ... other user fields
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  photoUrl?: string;
+  authDate?: number;
+  exchange?: "binance" | "btcc";
+  exchangeConnected?: boolean;
+  apiKey?: string;
+  apiSecret?: string;
+  riskLevel?: "low" | "medium" | "high";
+  lastSignalTokens?: { token: string; timestamp: Date }[];
+  createdAt?: Date;
+  updatedAt?: Date;
+  isAdmin?: boolean; 
 }
 interface SignalDocument extends mongoose.Document {
   type: "BUY" | "SELL";
-  // ... other signal fields
+  token: string;
+  price: number;
+  riskLevel: "low" | "medium" | "high";
+  createdAt?: Date;
+  expiresAt: Date;
+  autoExecuted?: boolean;
+  link?: string;
+  positives?: string[];
+  warnings?: string[];
+  warning_count?: number;
 }
 interface TradeDocument extends mongoose.Document {
   userId: mongoose.Schema.Types.ObjectId;
-  // ... other trade fields
+  signalId?: mongoose.Schema.Types.ObjectId;
+  cycleId?: mongoose.Schema.Types.ObjectId;
+  type: "BUY" | "SELL";
+  token: string;
+  price: number;
+  amount: number;
+  status?: "pending" | "completed" | "failed";
+  autoExecuted?: boolean;
+  createdAt?: Date;
 }
 interface CycleDocument extends mongoose.Document {
   userId: mongoose.Schema.Types.ObjectId;
-  // ... other cycle fields
+  token: string;
+  entryTrade?: mongoose.Schema.Types.ObjectId;
+  exitTrade?: mongoose.Schema.Types.ObjectId;
+  state?: "entry" | "hold" | "exit" | "completed";
+  entryPrice?: number;
+  exitPrice?: number;
+  pnl?: number;
+  pnlPercentage?: number;
+  guidance?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 interface PortfolioDocument extends mongoose.Document {
   userId: mongoose.Schema.Types.ObjectId;
-  // ... other portfolio fields
+  totalValue?: number;
+  freeCapital?: number;
+  allocatedCapital?: number;
+  realizedPnl?: number;
+  unrealizedPnl?: number;
+  holdings?: {
+    token?: string;
+    amount?: number;
+    averagePrice?: number;
+    currentPrice?: number;
+    value?: number;
+    pnl?: number;
+    pnlPercentage?: number;
+  }[];
+  updatedAt?: Date;
 }
 interface NotificationDocument extends mongoose.Document {
   userId: mongoose.Schema.Types.ObjectId;
-  // ... other notification fields
+  type: "signal" | "trade" | "cycle" | "system";
+  message: string;
+  read?: boolean;
+  relatedId?: mongoose.Schema.Types.ObjectId;
+  createdAt?: Date;
 }
 
 
