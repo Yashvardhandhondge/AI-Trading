@@ -25,6 +25,7 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
   const [apiKey, setApiKey] = useState("")
   const [apiSecret, setApiSecret] = useState("")
   const [riskLevel, setRiskLevel] = useState<"low" | "medium" | "high">("medium")
+  const [tradingMode, setTradingMode] = useState<"semi-automatic" | "manual">("semi-automatic") // Added state
   const [isLoadingExchange, setIsLoadingExchange] = useState(false)
   const [isLoadingRisk, setIsLoadingRisk] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -77,7 +78,7 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
     checkProxyServer()
   }, [proxyServerUrl])
 
-  // Load user's risk level from the database
+  // Load user's risk level and trading mode from the database
   useEffect(() => {
     const fetchUserSettings = async () => {
       try {
@@ -86,6 +87,9 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
           const data = await response.json()
           if (data.riskLevel) {
             setRiskLevel(data.riskLevel as "low" | "medium" | "high")
+          }
+          if (data.tradingMode) {
+            setTradingMode(data.tradingMode as "semi-automatic" | "manual")
           }
           // Also update exchange status if available
           if (data.exchangeConnected !== undefined) {
@@ -202,7 +206,7 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
     }
   }
 
-  // Handle updating risk level
+  // Handle updating risk level and trading mode
   const handleRiskUpdate = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoadingRisk(true)
@@ -217,6 +221,7 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
         },
         body: JSON.stringify({
           riskLevel,
+          tradingMode, // Include trading mode in update
         }),
       })
 
@@ -225,7 +230,7 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
         throw new Error(data.error || "Failed to update risk settings")
       }
 
-      setSuccess("Risk level updated successfully")
+      setSuccess("Settings updated successfully")
       
       // Call the onUpdateSuccess callback
       if (onUpdateSuccess) {
@@ -417,11 +422,11 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
       <Card>
         <CardHeader>
           <CardTitle>Risk Settings</CardTitle>
-          <CardDescription>Configure your risk tolerance for trading signals</CardDescription>
+          <CardDescription>Configure your risk tolerance and trading mode</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleRiskUpdate}>
-            <div className="space-y-4">
+            <div className="space-y-6">
               <div className="space-y-2">
                 <Label>Risk Level</Label>
                 <RadioGroup
@@ -440,6 +445,35 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
                   <div className="flex items-center space-x-2">
                     <RadioGroupItem value="high" id="high" />
                     <Label htmlFor="high">High Risk (Aggressive)</Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
+              {/* Added Trading Mode Section */}
+              <div className="space-y-2">
+                <Label>Trading Mode</Label>
+                <RadioGroup
+                  value={tradingMode}
+                  onValueChange={(value) => setTradingMode(value as "semi-automatic" | "manual")}
+                  className="flex flex-col space-y-1"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="semi-automatic" id="semi-automatic" />
+                    <div className="flex flex-col">
+                      <Label htmlFor="semi-automatic">Semi-Automatic</Label>
+                      <span className="text-sm text-muted-foreground">
+                        Automatically executes trades based on your risk settings and portfolio
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="manual" id="manual" />
+                    <div className="flex flex-col">
+                      <Label htmlFor="manual">Manual</Label>
+                      <span className="text-sm text-muted-foreground">
+                        Receive signals only - execute trades manually
+                      </span>
+                    </div>
                   </div>
                 </RadioGroup>
               </div>
