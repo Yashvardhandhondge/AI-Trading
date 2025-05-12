@@ -104,7 +104,8 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
     if (positions.length > 0) {
       const labels = positions.map(p => p.token);
       const values = positions.map(p => p.value);
-      const change = values[values.length - 1] - values[0];
+      // Calculate change based on the first and last value if available, otherwise default to 0
+      const change = values.length > 1 ? values[values.length - 1] - values[0] : 0;
       const borderColor = change >= 0 ? '#10b981' : '#ef4444';
       setChartData({
         labels,
@@ -116,8 +117,9 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
             backgroundColor: borderColor === '#10b981' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
             fill: true,
             tension: 0.3,
-            pointRadius: 0,
+            pointRadius: 3, // Changed from 0 to make points visible
             pointHoverRadius: 6,
+            pointHitRadius: 10, // Increase hit radius for easier interaction
           },
         ],
       });
@@ -141,7 +143,11 @@ const PortfolioChart: React.FC<{ userId: number }> = ({ userId }) => {
     },
     scales: {
       x: { grid: { display: false }, ticks: { color: '#6b7280' } },
-      y: { grid: { color: 'rgba(156,163,175,0.2)' }, ticks: { color: '#6b7280' } }
+      y: { 
+        grid: { color: 'rgba(156,163,175,0.2)' }, 
+        ticks: { color: '#6b7280' },
+        beginAtZero: true // Ensure y-axis starts at 0
+      }
     }
   };
   
