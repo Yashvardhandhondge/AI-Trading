@@ -1,21 +1,18 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { ExchangeProvider, useExchange } from "@/contexts/ExchangeContext"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dashboard } from "@/components/dashboard"
-import { Portfolio } from "@/components/portfolio"
 import { ProfitLossView } from "./ProfitLossView"
 import { Settings } from "@/components/settings"
 import { OnboardingTutorial } from "@/components/onboarding-tutorial"
 import { NotificationBanner } from "@/components/notification-banner"
 import { LeaderboardComponent } from "./leaderboard-component" 
-import { Bell } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import type { SessionUser } from "@/lib/auth"
 import { logger } from "@/lib/logger"
-import { toast } from "sonner"
-import { telegramService } from "@/lib/telegram-service"
 import { formatCurrency } from "@/lib/utils"
 
 export function MainApp() {
@@ -23,51 +20,10 @@ export function MainApp() {
   const [activeTab, setActiveTab] = useState("trades")
   const [isLoading, setIsLoading] = useState(true)
   const [showOnboarding, setShowOnboarding] = useState(false)
-  const [unreadNotifications, setUnreadNotifications] = useState(0)
-  const [portfolioValue, setPortfolioValue] = useState<number | null>(null)
-  const [isLoadingPortfolio, setIsLoadingPortfolio] = useState(false)
   const router = useRouter()
 
-  // Check for unread notifications
-  const checkUnreadNotifications = async () => {
-    try {
-      const response = await fetch("/api/notifications/unread")
-      if (response.ok) {
-        const data = await response.json()
-        if (data.notifications) {
-          setUnreadNotifications(data.notifications.length)
-        }
-      }
-    } catch (error) {
-      logger.error(`Error checking unread notifications: ${error instanceof Error ? error.message : 'Unknown error'}`)
-    }
-  }
-
-  // Fetch portfolio summary data
-  const fetchPortfolioSummary = useCallback(async () => {
-    if (!user?.exchangeConnected) return
-
-    try {
-      setIsLoadingPortfolio(true)
-      const response = await fetch("/api/portfolio/summary")
-      if (response.ok) {
-        const data = await response.json()
-        if (data.totalValue !== undefined) {
-          setPortfolioValue(data.totalValue)
-          logger.info("Portfolio summary fetched successfully", {
-            context: "MainApp",
-          })
-        }
-      }
-    } catch (error) {
-      logger.error(`Error fetching portfolio summary: ${error instanceof Error ? error.message : 'Unknown error'}`)
-    } finally {
-      setIsLoadingPortfolio(false)
-    }
-  }, [user?.exchangeConnected])
-
+  // Fetch user data
   useEffect(() => {
-    // Fetch user data
     const fetchUser = async () => {
       try {
         const response = await fetch("/api/user")
@@ -97,32 +53,7 @@ export function MainApp() {
     }
 
     fetchUser()
-
-    // Check for notifications
-    checkUnreadNotifications()
-    
-    // Set up polling for notifications
-    const notificationInterval = setInterval(checkUnreadNotifications, 30000)
-
-    // Cleanup on unmount
-    return () => {
-      clearInterval(notificationInterval)
-    }
   }, [router])
-
-  // Fetch portfolio value when user is loaded or connection status changes
-  useEffect(() => {
-    if (user?.exchangeConnected) {
-      fetchPortfolioSummary()
-      
-      // Refresh portfolio value every 2 minutes
-      const portfolioInterval = setInterval(fetchPortfolioSummary, 120000)
-      
-      return () => {
-        clearInterval(portfolioInterval)
-      }
-    }
-  }, [user?.exchangeConnected, fetchPortfolioSummary])
 
   // Handle onboarding completion
   const handleOnboardingComplete = () => {
@@ -130,44 +61,38 @@ export function MainApp() {
     logger.info("Onboarding completed", { context: "MainApp", userId: user?.id })
   }
 
-  // Handle tab change
-  const handleTabChange = (value: string) => {
-    setActiveTab(value)
-  }
-
   // Handle switching to settings tab from any component
   const handleSwitchToSettings = () => {
     setActiveTab("settings")
   }
 
- const refreshUserData = async () => {
-  try {
-    // Clear any cached response
-    const response = await fetch("/api/user", {
-      cache: 'no-store',
-      headers: {
-        'Cache-Control': 'no-cache'
-      }
-    })
-    
-    if (response.ok) {
-      const userData = await response.json()
-      setUser(userData)
-      logger.info("User data refreshed successfully", {
-        context: "MainApp",
-        userId: userData.id,
+  const refreshUserData = async () => {
+    try {
+      // Clear any cached response
+      const response = await fetch("/api/user", {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
       })
       
-      // If exchange is now connected and wasn't before, fetch portfolio
-      if (userData.exchangeConnected && !user?.exchangeConnected) {
-        setPortfolioValue(null) // Reset to show loading state
-        await fetchPortfolioSummary()
+      if (response.ok) {
+        const userData = await response.json()
+        setUser(userData)
+        logger.info("User data refreshed successfully", {
+          context: "MainApp",
+          userId: userData.id,
+        })
+        
+        // If exchange is now connected and wasn't before, fetch portfolio
+        if (userData.exchangeConnected && !user?.exchangeConnected) {
+          // Reset to show loading state
+        }
       }
+    } catch (error) {
+      logger.error("Error refreshing user data:", error instanceof Error ? error : new Error(String(error)))
     }
-  } catch (error) {
-    logger.error("Error refreshing user data:", error instanceof Error ? error : new Error(String(error)))
   }
-}
 
   if (isLoading) {
     return (
@@ -180,44 +105,81 @@ export function MainApp() {
     )
   }
 
-  if (!user) {
-    return null // Or a more detailed error state
-  }
+  if (!user) return null
 
-  // Show the main app UI
+  return (
+    <ExchangeProvider user={user}>
+      <MainAppContent
+        user={user}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        showOnboarding={showOnboarding}
+        setShowOnboarding={setShowOnboarding}
+        refreshUserData={refreshUserData}
+      />
+    </ExchangeProvider>
+  )
+}
+
+// New component to render UI using ExchangeContext
+function MainAppContent({
+  user,
+  activeTab,
+  setActiveTab,
+  showOnboarding,
+  setShowOnboarding,
+  refreshUserData
+}: any) {
+  const { isConnected, portfolioValue } = useExchange()
+  const [unreadNotifications, setUnreadNotifications] = useState(0)
+  // Handler to switch to settings tab
+  const handleSwitchToSettings = (): void => setActiveTab("settings")
+
+  // Check for unread notifications
+  useEffect(() => {
+    const checkUnreadNotifications = async () => {
+      try {
+        const response = await fetch("/api/notifications/unread")
+        if (response.ok) {
+          const data = await response.json()
+          setUnreadNotifications(data.notifications?.length || 0)
+        }
+      } catch (error) {
+        logger.error(`Error checking notifications: ${error instanceof Error ? error.message : 'Unknown'}`)
+      }
+    }
+    checkUnreadNotifications()
+    const interval = setInterval(checkUnreadNotifications, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+
   return (
     <>
       <div className="telegram-app w-full min-h-screen">
-        {/* Add header with app name */}
         <div className="bg-background border-b py-2 px-4 flex justify-between items-center">
           <h1 className="text-lg font-bold">Cycles.fun</h1>
-          {!user.exchangeConnected ? (
-            <button 
-              onClick={() => setActiveTab("settings")}
-              className="text-sm text-primary"
-            >
+          {!isConnected ? (
+            <button onClick={() => setActiveTab("settings")} className="text-sm text-primary">
               Connect Exchange
             </button>
           ) : (
             <div className="flex items-center">
-              {isLoadingPortfolio ? (
-                <div className="text-sm text-muted-foreground animate-pulse">Loading...</div>
-              ) : portfolioValue !== null ? (
+              {portfolioValue !== null ? (
                 <div className="text-sm font-medium">{formatCurrency(portfolioValue)}</div>
-              ) : null}
+              ) : (
+                <div className="text-sm text-muted-foreground animate-pulse">Loading...</div>
+              )}
             </div>
           )}
         </div>
-        
-        {/* Add NotificationBanner at the top level */}
         <NotificationBanner userId={user.id} />
-        
-        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full flex-1 flex flex-col">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full flex-1 flex flex-col">
           <TabsContent value="trades" className="flex-1 p-0">
             <Dashboard 
               user={user}
               onExchangeStatusChange={refreshUserData}
-              onSwitchToSettings={handleSwitchToSettings} // Pass the handler to switch tabs
+              onSwitchToSettings={handleSwitchToSettings} 
             />
           </TabsContent>
           
@@ -258,7 +220,7 @@ export function MainApp() {
           </TabsList>
         </Tabs>
       </div>
-      {showOnboarding && <OnboardingTutorial onComplete={handleOnboardingComplete} />}
+      {showOnboarding && <OnboardingTutorial onComplete={() => setShowOnboarding(false)} />}
     </>
   )
 }

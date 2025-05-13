@@ -17,9 +17,10 @@ import { logger } from "@/lib/logger"
 interface SettingsProps {
   user: SessionUser;
   onUpdateSuccess?: () => void;
+  onSwitchToSettings?: () => void;
 }
 
-export function Settings({ user, onUpdateSuccess }: SettingsProps) {
+export function Settings({ user, onUpdateSuccess, onSwitchToSettings }: SettingsProps) {
   const router = useRouter()
   const [exchange, setExchange] = useState<"binance" | "btcc">(user.exchange || "binance")
   const [apiKey, setApiKey] = useState("")
@@ -281,6 +282,13 @@ export function Settings({ user, onUpdateSuccess }: SettingsProps) {
       setError(err instanceof Error ? err.message : "Failed to disconnect exchange")
     } finally {
       setIsLoadingExchange(false)
+    }
+  }
+
+  // Handler to switch to settings tab
+  const handleSwitchToSettings = (): void => {
+    if (onSwitchToSettings) {
+      onSwitchToSettings()
     }
   }
 
