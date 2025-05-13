@@ -7,6 +7,10 @@
  */
 
 import { logger } from "./logger";
+interface RateLimitCache {
+  lastCall: number;
+  callCount: number;
+}
 
 interface TradingProxyConfig {
   proxyServerUrl: string;
@@ -17,6 +21,9 @@ export class TradingProxyService {
   private static instance: TradingProxyService;
   private proxyServerUrl: string;
   private defaultTimeout: number;
+  private rateLimitCache: Map<string, RateLimitCache> = new Map();
+  private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute
+  private readonly MAX_CALLS_PER_WINDOW = 60;
 
   private constructor(config: TradingProxyConfig) {
     this.proxyServerUrl = config.proxyServerUrl;
@@ -99,16 +106,56 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
     }
   }
 
+
+   private async checkRateLimit(endpoint: string): Promise<void> {
+    const now = Date.now();
+    const cacheKey = endpoint;
+    const cache = this.rateLimitCache.get(cacheKey);
+
+    if (!cache) {
+      this.rateLimitCache.set(cacheKey, { lastCall: now, callCount: 1 });
+      return;
+    }
+
+    // If we're within the rate limit window
+    if (now - cache.lastCall < this.RATE_LIMIT_WINDOW) {
+      cache.callCount++;
+      
+      if (cache.callCount > this.MAX_CALLS_PER_WINDOW) {
+        // Calculate delay to wait before next call
+        const delayMs = this.RATE_LIMIT_WINDOW - (now - cache.lastCall);
+        logger.warn(`Rate limit reached for ${endpoint}, waiting ${delayMs}ms`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        
+        // Reset the counter after waiting
+        cache.lastCall = Date.now();
+        cache.callCount = 1;
+      }
+    } else {
+      // Reset the window
+      cache.lastCall = now;
+      cache.callCount = 1;
+    }
+  }
+
+
   /**
    * Check if a user has registered API keys
    */
-  public async checkApiKeyStatus(userId: string | number): Promise<boolean> {
+ public async checkApiKeyStatus(userId: string | number): Promise<boolean> {
     try {
+      await this.checkRateLimit('checkApiKeyStatus');
+      
       const response = await fetch(`${this.proxyServerUrl}/api/user/${userId}/key-status`, {
         signal: AbortSignal.timeout(this.defaultTimeout)
       });
 
       if (!response.ok) {
+        if (response.status === 429) {
+          logger.warn(`Rate limit hit for checkApiKeyStatus: ${userId}`);
+          // Return cached value or false
+          return false;
+        }
         return false;
       }
 
@@ -119,6 +166,7 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
       return false;
     }
   }
+
 
   /**
    * Execute a proxy request to Binance API
@@ -330,15 +378,25 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
       throw error;
     }
   }
+   
+   private portfolioCache: Map<string, { data: any; timestamp: number }> = new Map();
+  private readonly CACHE_DURATION = 30000;
 
-  /**
-   * Get portfolio data
-   */
   public async getPortfolio(userId: string | number): Promise<any> {
     try {
+          const cacheKey = `portfolio_${userId}`;
+      const cached = this.portfolioCache.get(cacheKey);
+
+         if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
+        console.log(`Returning cached portfolio for user ${userId}`);
+        return cached.data;
+      }
+
       logger.info(`Getting portfolio for user ${userId}`, {
         context: 'TradingProxy'
       });
+
+        await this.checkRateLimit('getPortfolio');
 
       // First check if the API keys are registered
       const hasKeys = await this.checkApiKeyStatus(userId);
@@ -398,14 +456,21 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
 
       totalValue = freeCapital + allocatedCapital;
 
-      return {
+       const portfolioData = {
         totalValue,
         freeCapital,
         allocatedCapital,
         holdings,
-        realizedPnl: 0, // This would need to be calculated from trade history
-        unrealizedPnl: 0 // This would need average entry prices to calculate
+        realizedPnl: 0,
+        unrealizedPnl: 0
       };
+
+      // Cache the result
+      this.portfolioCache.set(cacheKey, {
+        data: portfolioData,
+        timestamp: Date.now()
+      });
+      return portfolioData;
     } catch (error) {
       logger.error(`Error fetching portfolio from proxy: ${error instanceof Error ? error.message : "Unknown error"}`);
       throw error;
