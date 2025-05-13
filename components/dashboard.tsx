@@ -57,6 +57,13 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       }
       
       setError(null)
+
+useEffect(() => {
+  if (user.exchangeConnected) {
+    fetchSignals(true)
+    fetchUserHoldings()
+  }
+}, [user.exchangeConnected])
       
       logger.info(`Fetching signals for risk level: ${user.riskLevel}`, {
         context: "Dashboard", 

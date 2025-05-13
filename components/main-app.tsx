@@ -140,34 +140,34 @@ export function MainApp() {
     setActiveTab("settings")
   }
 
-  // Refresh user data (useful after connecting exchange)
-  const refreshUserData = async () => {
-    try {
-      // Clear any cached response
-      const response = await fetch("/api/user", {
-        cache: 'no-store',
-        headers: {
-          'Cache-Control': 'no-cache'
-        }
+ const refreshUserData = async () => {
+  try {
+    // Clear any cached response
+    const response = await fetch("/api/user", {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache'
+      }
+    })
+    
+    if (response.ok) {
+      const userData = await response.json()
+      setUser(userData)
+      logger.info("User data refreshed successfully", {
+        context: "MainApp",
+        userId: userData.id,
       })
       
-      if (response.ok) {
-        const userData = await response.json()
-        setUser(userData)
-        logger.info("User data refreshed successfully", {
-          context: "MainApp",
-          userId: userData.id,
-        })
-        
-        // Also refresh portfolio if exchange is connected
-        if (userData.exchangeConnected) {
-          fetchPortfolioSummary()
-        }
+      // If exchange is now connected and wasn't before, fetch portfolio
+      if (userData.exchangeConnected && !user?.exchangeConnected) {
+        setPortfolioValue(null) // Reset to show loading state
+        await fetchPortfolioSummary()
       }
-    } catch (error) {
-      logger.error("Error refreshing user data:", error instanceof Error ? error : new Error(String(error)))
     }
+  } catch (error) {
+    logger.error("Error refreshing user data:", error instanceof Error ? error : new Error(String(error)))
   }
+}
 
   if (isLoading) {
     return (
