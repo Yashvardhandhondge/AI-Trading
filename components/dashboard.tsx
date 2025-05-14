@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge"
 import { 
   Loader2, 
   Settings, 
-  Info, 
   RefreshCw, 
   Clock, 
   AlertCircle, 
@@ -16,15 +15,29 @@ import {
   Bell 
 } from "lucide-react"
 import { SignalCard } from "@/components/signal-card"
-
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
-import { ExchangeConnectionBanner } from "@/components/exchange-connection-banner"
 import { ActivityLogTable } from "./activity-log-table"
 import { toast } from "sonner"
 import { logger } from "@/lib/logger"
 import type { SessionUser } from "@/lib/auth"
-import { signalService, type Signal } from "@/lib/signal-service"
 import { telegramService } from "@/lib/telegram-service"
+
+interface Signal {
+  id: string;
+  type: "BUY" | "SELL";
+  token: string;
+  price: number;
+  riskLevel: "low" | "medium" | "high";
+  createdAt: string;
+  expiresAt: string;
+  autoExecuted: boolean;
+  link?: string;
+  positives?: string[];
+  warnings?: string[];
+  warning_count?: number;
+  processed?: boolean;
+  action?: string;
+}
 
 interface DashboardProps {
   user: SessionUser;
@@ -39,16 +52,12 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
   const [showConnectModal, setShowConnectModal] = useState(false)
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
-  const [positionAccumulation, setPositionAccumulation] = useState<Record<string, number>>({})
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [refreshing, setRefreshing] = useState(false)
-  const [lastSignalCheckTime, setLastSignalCheckTime] = useState<number>(Date.now())
-  const [notifiedSignalIds, setNotifiedSignalIds] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<string>("signals");
+  const [activeTab, setActiveTab] = useState<string>("signals")
   
-  // Fetch active signals - wrapped in useCallback to be reusable
+  // Fetch latest signals from database
   const fetchSignals = useCallback(async (showLoadingState = true) => {
-    // Implementation remains the same
     try {
       if (showLoadingState) {
         setIsLoading(true)
@@ -57,62 +66,41 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       }
       
       setError(null)
-
-useEffect(() => {
-  if (user.exchangeConnected) {
-    fetchSignals(true)
-    fetchUserHoldings()
-  }
-}, [user.exchangeConnected])
       
-      logger.info(`Fetching signals for risk level: ${user.riskLevel}`, {
-        context: "Dashboard", 
-        userId: user.id
-      })
+      // Calculate time 30 minutes ago for fetching recent signals
+      const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000
       
-      // Use our signal service to fetch signals
-      const fetchedSignals = await signalService.getSignals({
-        riskLevel: user.riskLevel as "low" | "medium" | "high",
-        limit: 10
-      })
+      const response = await fetch(`/api/signals/latest?since=${thirtyMinutesAgo}&_t=${Date.now()}`)
       
-      // Process signals to identify if they're old (received more than 10 minutes ago)
-      const processedSignals = fetchedSignals.map(signal => {
-        // Create a Date object from the createdAt string
-        const createdDate = new Date(signal.createdAt);
-        const now = new Date();
+      if (!response.ok) {
+        throw new Error(`Failed to fetch signals: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      
+      if (data.signals && Array.isArray(data.signals)) {
+        // Process signals to check which are within the 10-minute execution window
+        const processedSignals = data.signals.map((signal: Signal) => {
+          const createdDate = new Date(signal.createdAt)
+          const now = new Date()
+          const minutesAgo = Math.floor((now.getTime() - createdDate.getTime()) / (1000 * 60))
+          
+          // Only signals received within the last 10 minutes can be executed
+          const canExecute = minutesAgo < 10
+          
+          return {
+            ...signal,
+            canExecute
+          }
+        })
         
-        // Calculate how long ago the signal was created (in minutes)
-        const minutesAgo = Math.floor((now.getTime() - createdDate.getTime()) / (1000 * 60));
-        
-        // Mark signals older than 10 minutes
-        const isOldSignal = minutesAgo >= 10;
-        
-        return {
-          ...signal,
-          isOldSignal
-        };
-      });
-      
-      if (processedSignals.length > 0) {
         setSignals(processedSignals)
-        logger.info(`Fetched ${processedSignals.length} signals successfully`, {
-          context: "Dashboard", 
-          userId: user.id
-        })
+        logger.info(`Fetched ${processedSignals.length} signals (${processedSignals.filter((s: any) => s.canExecute).length} can be executed)`)
       } else {
-        logger.info("No signals returned from service", {
-          context: "Dashboard",
-          userId: user.id
-        })
-        // Keep existing signals if we have them, otherwise empty array
         setSignals([])
       }
       
-      // Update last fetched timestamp
       setLastUpdated(new Date())
-      setLastSignalCheckTime(Date.now())
-      
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to load signals"
       setError(errorMessage)
@@ -121,7 +109,7 @@ useEffect(() => {
       setIsLoading(false)
       setRefreshing(false)
     }
-  }, [user.id, user.riskLevel])
+  }, [])
   
   // Fetch user holdings
   const fetchUserHoldings = async () => {
@@ -138,11 +126,6 @@ useEffect(() => {
             holdings[holding.token] = holding.amount
           })
           setUserHoldings(holdings)
-          
-          logger.info(`Fetched user holdings: ${Object.keys(holdings).join(', ')}`, {
-            context: "Dashboard",
-            userId: user.id
-          })
         }
       }
     } catch (error) {
@@ -150,345 +133,109 @@ useEffect(() => {
     }
   }
   
+  // Effect to fetch signals and holdings on mount and set up polling
   useEffect(() => {
     fetchSignals()
     fetchUserHoldings()
     
-    // Load position accumulation data from localStorage
-    try {
-      const storedAccumulation = localStorage.getItem('positionAccumulation')
-      if (storedAccumulation) {
-        setPositionAccumulation(JSON.parse(storedAccumulation))
-      }
-    } catch (e) {
-      logger.error("Failed to load position accumulation from localStorage")
-    }
+    // Poll for new signals every 30 seconds
+    const intervalId = setInterval(() => {
+      fetchSignals(false)
+    }, 30000)
     
-    // Refresh signals every 1 minute
-    const intervalId = setInterval(() => fetchSignals(false), 60000)
-    
-    return () => {
-      clearInterval(intervalId)
-    }
-  }, [user.id, user.exchangeConnected, fetchSignals])
+    return () => clearInterval(intervalId)
+  }, [fetchSignals])
   
-  // Check for new signals periodically
-  const checkForNewSignals = useCallback(async () => {
-    try {
-      // Don't check too frequently
-      const now = Date.now();
-      if (now - lastSignalCheckTime < 15000) { // Only check every 15+ seconds
-        return;
-      }
-      
-      setLastSignalCheckTime(now);
-      const result = await signalService.checkForNewSignals(lastSignalCheckTime);
-      
-      if (result.hasNew && result.newSignals.length > 0) {
-        // Filter out signals with price of 0 or invalid prices
-        const validNewSignals = result.newSignals.filter(signal => {
-          // Check for valid price
-          if (!signal.price || signal.price <= 0) {
-            logger.warn(`Ignoring signal with invalid price: ${signal.token}`, {
-              context: "Dashboard",
-              userId: user.id,
-              data: { price: signal.price }
-            });
-            return false;
-          }
-          
-          // Deduplicate based on signal ID
-          if (notifiedSignalIds.has(signal.id)) {
-            logger.debug(`Skipping already notified signal: ${signal.id}`, {
-              context: "Dashboard"
-            });
-            return false;
-          }
-          
-          // Add to notified set
-          return true;
-        });
-        
-        if (validNewSignals.length === 0) {
-          return; // No valid signals to notify about
-        }
-        
-        // Add the new signals to the list (avoiding duplicates)
-        setSignals(prev => {
-          const prevIds = new Set(prev.map(s => s.id));
-          const newSignalsToAdd = validNewSignals.filter(s => !prevIds.has(s.id));
-          
-          if (newSignalsToAdd.length === 0) return prev;
-          
-          // Get the newest signal for notification
-          const newestSignal = newSignalsToAdd[0];
-          
-          // Add to notified IDs set to prevent duplicate notifications
-          setNotifiedSignalIds(prev => {
-            const newSet = new Set(prev);
-            newSet.add(newestSignal.id);
-            return newSet;
-          });
-          
-          // Only show notification for signals with valid prices
-          if (newestSignal.price > 0) {
-            // Show notification
-            toast(`New ${newestSignal.type} signal for ${newestSignal.token}`, {
-              description: `Price: ${newestSignal.price}`,
-              action: {
-                label: "View",
-                onClick: () => {
-                  setActiveTab("signals");
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-              },
-              duration: 10000 // 10 seconds
-            });
-            
-            // Try Telegram's native notification if available
-            try {
-              telegramService.triggerHapticFeedback('notification');
-              telegramService.showPopup(
-                `🔔 New ${newestSignal.type} signal for ${newestSignal.token}`,
-                [{ type: "default", text: "View" }],
-                () => {
-                  setActiveTab("signals");
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-              );
-            } catch (e) {
-              // Ignore errors with Telegram API
-            }
-          }
-          
-          // Return combined array with new signals first
-          return [...newSignalsToAdd, ...prev];
-        });
-      }
-    } catch (error) {
-      logger.error(`Error checking for new signals: ${error instanceof Error ? error.message : "Unknown error"}`);
-    }
-  }, [lastSignalCheckTime, user.id, notifiedSignalIds]);
-  
-  // Update the useEffect for checking new signals
-  useEffect(() => {
-    // Check for new signals every 2 minutes
-    const checkInterval = setInterval(checkForNewSignals, 120000); // 2 minutes
-    return () => clearInterval(checkInterval);
-  }, [checkForNewSignals]);
-
-  // Handle manual refresh
-  const handleRefresh = () => {
-    fetchSignals(false)
-  }
-  
-  // Handle settings click - Now changes the active tab instead of using router
-  const handleSettingsClick = () => {
-    if (onSwitchToSettings) {
-      onSwitchToSettings();
-    }
-  }
-  
-  // Handle tab change
-  const handleTabChange = (tab: string) => {
-    setActiveTab(tab);
-  }
-
-  // Handle signal actions (Buy/Skip)
+  // Handle signal actions
   const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => {
     try {
-      // Get the signal from our state
-      const signal = signals.find(s => s.id === signalId);
+      const signal = signals.find(s => s.id === signalId)
       
       if (!signal) {
-        throw new Error("Signal not found");
+        throw new Error("Signal not found")
       }
       
-      // For Skip actions, we want to handle it even if exchange is not connected
+      // Check if signal can be executed (within 10 minutes of creation)
+      const createdDate = new Date(signal.createdAt)
+      const now = new Date()
+      const minutesAgo = Math.floor((now.getTime() - createdDate.getTime()) / (1000 * 60))
+      
+      if ((action === "accept" || action === "accept-partial") && minutesAgo >= 10) {
+        toast.error("This signal has expired and can no longer be executed")
+        return
+      }
+      
+      // Skip action doesn't require exchange connection
       if (action === "skip") {
-        // Just update the UI to show this signal as skipped
         setSignals(prev => 
           prev.map(s => 
             s.id === signalId 
               ? { ...s, processed: true, action: "skip" } 
               : s
           )
-        );
+        )
         
-        // Show a toast message
-        toast.info(`Skipped ${signal.type} signal for ${signal.token}`);
+        toast.info(`Skipped ${signal.type} signal for ${signal.token}`)
+        return
+      }
+      
+      // Other actions require exchange connection
+      if (!user.exchangeConnected) {
+        setShowConnectModal(true)
+        return
+      }
+      
+      // Set loading state
+      setActionLoading(prev => ({ ...prev, [signalId]: action }))
+      
+      const response = await fetch(`/api/signals/${signalId}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ percentage })
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || `Failed to ${action} signal`)
+      }
+      
+      // Success
+      const message = action === "accept-partial" 
+        ? `Sold ${percentage}% of ${signal.token}`
+        : `${signal.type === "BUY" ? "Bought" : "Sold"} ${signal.token}`
         
-        // Try to trigger haptic feedback
-        try {
-          telegramService.triggerHapticFeedback('selection');
-        } catch (e) {
-          // Ignore errors with haptics
-        }
-        
-        // No need to call the API for skip if user is not connected
-        if (!user.exchangeConnected) {
-          return;
-        }
-      }
+      toast.success(message)
       
-      // If not skip and user is not connected, show connect modal
-      if ((action === "accept" || action === "accept-partial") && !user.exchangeConnected) {
-        setShowConnectModal(true);
-        return;
-      }
-      
-      // For SELL signals, verify user has the token
-      if (signal.type === "SELL" && (action === "accept" || action === "accept-partial") && 
-          (!userHoldings[signal.token] || userHoldings[signal.token] <= 0)) {
-        toast.error(`You don't own any ${signal.token} to sell`);
-        return;
-      }
-      
-      // Set loading state for this specific signal
-      setActionLoading(prev => ({ ...prev, [signalId]: action }));
-      
-      // Log the signal action attempt
-      logger.info(`Attempting signal action: ${action} for ${signal.type} ${signal.token} (ID: ${signalId})`, {
-        context: "Dashboard",
-        userId: user.id
-      });
-      
-      // For actions other than skip, call our signal service to handle the action
-      if (action !== "skip" || user.exchangeConnected) {
-        // Call our signal service to handle the action
-        await signalService.executeSignalAction(signalId, action, percentage);
-      }
-      
-      // Handle success
-      if (action === "accept" || action === "accept-partial") {
-        // Update position accumulation for BUY signals
-        if (signal.type === "BUY") {
-          // Increment by 10% for each buy
-          const newAccumulation = { 
-            ...positionAccumulation,
-            [signal.token]: (positionAccumulation[signal.token] || 0) + 10
-          };
-          setPositionAccumulation(newAccumulation);
-          localStorage.setItem('positionAccumulation', JSON.stringify(newAccumulation));
-          
-          toast.success(`Successfully bought ${signal.token}`, {
-            description: `Position accumulation: ${newAccumulation[signal.token]}%`
-          });
-          
-          // Switch to activity log tab to show the result
-          setTimeout(() => {
-            setActiveTab("activity");
-          }, 1500);
-        } else if (action === "accept") {
-          // For full SELL, remove from position accumulation
-          const newAccumulation = { ...positionAccumulation };
-          delete newAccumulation[signal.token];
-          setPositionAccumulation(newAccumulation);
-          localStorage.setItem('positionAccumulation', JSON.stringify(newAccumulation));
-          
-          toast.success(`Successfully sold ${signal.token}`);
-          
-          // Switch to activity log tab to show the result
-          setTimeout(() => {
-            setActiveTab("activity");
-          }, 1500);
-        } else if (action === "accept-partial" && percentage) {
-          // For partial SELL, reduce the accumulated percentage
-          const currentAccumulation = positionAccumulation[signal.token] || 0;
-          if (currentAccumulation > 0) {
-            const newPercentage = Math.max(0, currentAccumulation - (currentAccumulation * (percentage / 100)));
-            const newAccumulation = { ...positionAccumulation, [signal.token]: newPercentage };
-            setPositionAccumulation(newAccumulation);
-            localStorage.setItem('positionAccumulation', JSON.stringify(newAccumulation));
-            
-            toast.success(`Successfully sold ${percentage}% of ${signal.token}`);
-            
-            // Switch to activity log tab to show the result
-            setTimeout(() => {
-              setActiveTab("activity");
-            }, 1500);
-          }
-        }
-        
-        // Refresh holdings
-        fetchUserHoldings();
-      } else if (action === "skip") {
-        toast.info(`Skipped ${signal.type} signal for ${signal.token}`);
-      }
-      
-      // Mark signal as processed in the UI
       setSignals(prev => 
         prev.map(s => 
           s.id === signalId 
             ? { ...s, processed: true, action } 
             : s
         )
-      );
+      )
       
-      // Try to trigger haptic feedback for better UX
-      try {
-        telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification");
-      } catch (e) {
-        // Ignore errors with haptics
-      }
+      // Refresh holdings after trade
+      fetchUserHoldings()
+      
+      // Switch to activity tab
+      setTimeout(() => setActiveTab("activity"), 1500)
+      
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to process action";
-      toast.error(`Action failed: ${errorMessage}`);
-      logger.error(`Signal action error: ${errorMessage}`);
-      
-      // Switch to activity log tab to show the error details
-      setTimeout(() => {
-        setActiveTab("activity");
-      }, 1500);
+      const errorMessage = err instanceof Error ? err.message : "Failed to process action"
+      toast.error(errorMessage)
+      logger.error(`Signal action error: ${errorMessage}`)
     } finally {
-      // Clear loading state
       setActionLoading(prev => {
-        const newState = { ...prev };
-        delete newState[signalId];
-        return newState;
-      });
+        const newState = { ...prev }
+        delete newState[signalId]
+        return newState
+      })
     }
   }
-
-  // Handle successful exchange connection
-  const handleExchangeConnected = () => {
-    // Refresh user data
-    if (onExchangeStatusChange) {
-      onExchangeStatusChange();
-    }
-    
-    // Fetch holdings after connection
-    fetchUserHoldings();
-    
-    // Close the modal
-    setShowConnectModal(false);
-  }
-
+  
   if (isLoading && signals.length === 0) {
     return (
       <div className="container mx-auto p-4 pb-20">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold">Bot Trading Dashboard</h2>
-          <div className="flex items-center gap-2">
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              disabled={true}
-            >
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </Button>
-            
-            {/* Settings button - now switches to settings tab */}
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              onClick={handleSettingsClick}
-            >
-              <Settings className="h-5 w-5" />
-            </Button>
-          </div>
-        </div>
-        
         <div className="flex justify-center items-center p-8">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <span className="ml-2">Loading signals...</span>
@@ -524,17 +271,16 @@ useEffect(() => {
           <Button 
             variant="ghost" 
             size="icon" 
-            onClick={handleRefresh}
+            onClick={() => fetchSignals(false)}
             disabled={refreshing}
           >
             <RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} />
           </Button>
           
-          {/* Settings button - now switches to settings tab */}
           <Button 
             variant="ghost" 
             size="icon" 
-            onClick={handleSettingsClick}
+            onClick={onSwitchToSettings}
           >
             <Settings className="h-5 w-5" />
           </Button>
@@ -550,8 +296,7 @@ useEffect(() => {
         </div>
       )}
       
-      {/* Tabs for Signals and Log */}
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="mt-2">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-2">
         <TabsList className="grid grid-cols-2 mb-4">
           <TabsTrigger value="signals" className="flex items-center gap-1">
             <Bell className="h-4 w-4" />
@@ -571,23 +316,19 @@ useEffect(() => {
           {signals.length === 0 ? (
             <Card>
               <CardContent className="p-6 text-center">
-                <p className="text-muted-foreground">No active signals at the moment</p>
-                <p className="text-sm text-muted-foreground mt-2">We'll notify you when new signals are available</p>
+                <p className="text-muted-foreground">No signals in the last 30 minutes</p>
+                <p className="text-sm text-muted-foreground mt-2">New signals will appear here automatically</p>
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-3">
               {signals.map(signal => {
-                // Check if this signal has been processed
-                const isProcessed = !!(signal as any).processed;
-                const isOldSignal = !!(signal as any).isOldSignal;
-                const userOwnsToken = !!userHoldings[signal.token] && userHoldings[signal.token] > 0;
-                const showBuyButton = signal.type === "BUY" || (signal.type === "SELL" && userOwnsToken);
-                const accumulatedPercentage = positionAccumulation[signal.token] || 0;
+                const userOwnsToken = !!userHoldings[signal.token] && userHoldings[signal.token] > 0
+                const canExecute = (signal as any).canExecute
                 
-                // Skip signals that don't match our criteria
+                // Skip SELL signals for tokens the user doesn't own
                 if (signal.type === "SELL" && !userOwnsToken) {
-                  return null;
+                  return null
                 }
                 
                 return (
@@ -597,10 +338,9 @@ useEffect(() => {
                     onAction={handleSignalAction} 
                     exchangeConnected={user.exchangeConnected}
                     userOwnsToken={userOwnsToken}
-                    accumulatedPercentage={accumulatedPercentage}
-                    isOldSignal={isOldSignal} // Pass the flag to indicate if this is an old signal
+                    canExecute={canExecute}
                   />
-                );
+                )
               })}
             </div>
           )}
@@ -611,12 +351,14 @@ useEffect(() => {
         </TabsContent>
       </Tabs>
       
-      {/* Connect Exchange Modal */}
       <ConnectExchangeModal 
         open={showConnectModal} 
         onOpenChange={setShowConnectModal}
         userId={Number(user.id)}
-        onSuccess={handleExchangeConnected}
+        onSuccess={() => {
+          onExchangeStatusChange?.()
+          setShowConnectModal(false)
+        }}
       />
     </div>
   )

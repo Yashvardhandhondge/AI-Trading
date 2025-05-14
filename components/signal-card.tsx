@@ -1,38 +1,39 @@
-"use client"
-
-import { useState, useEffect, useRef } from "react"
+// components/signal-card.tsx
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Loader2, ArrowUp, ArrowDown, Clock, AlertTriangle, ExternalLink, Check, X, Info, AlertCircle } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip" 
-import { telegramService } from "@/lib/telegram-service" 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { telegramService } from "@/lib/telegram-service"
 import { toast } from "sonner"
 import { logger } from "@/lib/logger"
+import { useState, useEffect, useRef } from "react"
 
 interface Signal {
-  id: string;
-  type: "BUY" | "SELL";
-  token: string;
-  price: number;
-  riskLevel: "low" | "medium" | "high";
-  createdAt: string;
-  expiresAt: string;
-  link?: string;
-  positives?: string[];
-  warnings?: string[];
-  warning_count?: number;
+  id: string
+  type: "BUY" | "SELL"
+  token: string
+  price: number
+  riskLevel: "low" | "medium" | "high"
+  createdAt: string
+  expiresAt: string
+  link?: string
+  positives?: string[]
+  warnings?: string[]
+  warning_count?: number
+  processed?: boolean
+  action?: string
 }
 
 interface SignalCardProps {
-  signal: Signal;
-  onAction: (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => void;
-  exchangeConnected: boolean;
-  userOwnsToken?: boolean;
-  accumulatedPercentage?: number;
-  isOldSignal?: boolean;
+  signal: Signal
+  onAction: (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => void
+  exchangeConnected: boolean
+  userOwnsToken?: boolean
+  accumulatedPercentage?: number
+  canExecute?: boolean
 }
 
 export function SignalCard({ 
@@ -41,156 +42,100 @@ export function SignalCard({
   exchangeConnected, 
   userOwnsToken = false,
   accumulatedPercentage = 0,
-  isOldSignal = false
+  canExecute = true
 }: SignalCardProps) {
-  const [timeLeft, setTimeLeft] = useState<number>(0);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showDetails, setShowDetails] = useState<boolean>(false);
-  const [actionType, setActionType] = useState<"full" | "partial" | "skip" | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const [signalTimestamp, setSignalTimestamp] = useState<Date | null>(null);
-  const [isSignalExpired, setIsSignalExpired] = useState<boolean>(false);
+  const [timeLeft, setTimeLeft] = useState<number>(0)
+  const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [error, setError] = useState<string | null>(null)
+  const [showDetails, setShowDetails] = useState<boolean>(false)
+  const [actionType, setActionType] = useState<"full" | "partial" | "skip" | null>(null)
+  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const [signalTimestamp, setSignalTimestamp] = useState<Date | null>(null)
   
-  // Calculate the initial time left based on signal creation and expiration time
+  // Calculate timer based on how much time is left until signal expires for execution
   useEffect(() => {
     try {
-      // Parse the signal createdAt and expiresAt dates
-      const createdAt = new Date(signal.createdAt);
-      const expiresAt = new Date(signal.expiresAt);
-      const now = new Date();
+      const createdAt = new Date(signal.createdAt)
+      const now = new Date()
       
-      // Store the signal timestamp for display purposes
-      setSignalTimestamp(createdAt);
+      setSignalTimestamp(createdAt)
       
-      // Check if dates are valid
-      if (isNaN(createdAt.getTime()) || isNaN(expiresAt.getTime())) {
-        logger.error(`Invalid date for signal ${signal.id}: createdAt=${signal.createdAt}, expiresAt=${signal.expiresAt}`);
-        setTimeLeft(0);
-        setIsSignalExpired(true);
-        return;
-      }
+      // Calculate remaining time until 10-minute execution window expires
+      const tenMinutesMS = 10 * 60 * 1000
+      const elapsedTime = now.getTime() - createdAt.getTime()
+      const remainingTime = Math.max(0, tenMinutesMS - elapsedTime)
       
-      // Check if the signal is already expired (more than 10 minutes old or past expiresAt)
-      const tenMinutesMS = 10 * 60 * 1000;
-      const isCreatedTooOld = (now.getTime() - createdAt.getTime()) > tenMinutesMS;
-      const isPastExpiry = now > expiresAt;
+      // Convert to seconds
+      const secondsLeft = Math.floor(remainingTime / 1000)
+      setTimeLeft(secondsLeft)
       
-      if (isCreatedTooOld || isPastExpiry || isOldSignal) {
-        setTimeLeft(0);
-        setIsSignalExpired(true);
-        logger.info(`Signal ${signal.id} for ${signal.token} is expired`);
-        return;
-      }
-      
-      // Calculate remaining time in seconds
-      const remainingMs = expiresAt.getTime() - now.getTime();
-      const secondsLeft = Math.max(0, Math.floor(remainingMs / 1000));
-      setTimeLeft(secondsLeft);
-      
-      // Set up timer to count down
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prevTime) => {
-          if (prevTime <= 1) {
-            // If timer reaches zero, clear the interval and mark as expired
-            if (timerRef.current) {
-              clearInterval(timerRef.current);
-              timerRef.current = null;
+      // Only set up timer if there's time left and signal can be executed
+      if (secondsLeft > 0 && canExecute) {
+        timerRef.current = setInterval(() => {
+          setTimeLeft((prevTime) => {
+            if (prevTime <= 1) {
+              if (timerRef.current) {
+                clearInterval(timerRef.current)
+                timerRef.current = null
+              }
+              return 0
             }
-            setIsSignalExpired(true);
-            return 0;
-          }
-          return prevTime - 1;
-        });
-      }, 1000);
-      
+            return prevTime - 1
+          })
+        }, 1000)
+      }
     } catch (e) {
-      logger.error(`Error setting up signal timer: ${e instanceof Error ? e.message : "Unknown error"}`);
-      setTimeLeft(0);
-      setIsSignalExpired(true);
+      logger.error(`Error setting up timer: ${e instanceof Error ? e.message : "Unknown error"}`)
+      setTimeLeft(0)
     }
     
-    // Cleanup function
     return () => {
       if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+        clearInterval(timerRef.current)
+        timerRef.current = null
       }
-    };
-  }, [signal.id, signal.createdAt, signal.expiresAt, isOldSignal]);
+    }
+  }, [signal.id, signal.createdAt, canExecute])
 
   const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
 
   const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number): Promise<void> => {
-    // If signal is expired, don't allow actions except skip
-    if (isSignalExpired && action !== "skip") {
-      toast.error("This signal has expired and can no longer be executed");
-      return;
+    if (!canExecute && action !== "skip") {
+      toast.error("This signal has expired and can no longer be executed")
+      return
     }
     
-    // Ensure signal has a valid ID
     if (!signal.id) {
-      logger.error("Cannot process action: Signal ID is missing");
-      setError("Invalid signal data. Cannot process action.");
-      return;
+      logger.error("Cannot process action: Signal ID is missing")
+      setError("Invalid signal data. Cannot process action.")
+      return
     }
 
-    setIsLoading(true);
-    setError(null);
-    setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip");
+    setIsLoading(true)
+    setError(null)
+    setActionType(action === "accept" ? "full" : action === "accept-partial" ? "partial" : "skip")
     
     try {
-      // If not skip and user is not connected, show connect modal by calling onAction
-      if ((action === "accept" || action === "accept-partial") && !exchangeConnected) {
-        onAction(action, signal.id, percentage);
-        setIsLoading(false);
-        setActionType(null);
-        return;
-      }
+      await onAction(action, signal.id, percentage)
       
-      // For SELL signals, verify user has the token
-      if (signal.type === "SELL" && (action === "accept" || action === "accept-partial") && !userOwnsToken) {
-        setError(`You don't own any ${signal.token} to sell`);
-        setIsLoading(false);
-        setActionType(null);
-        return;
-      }
-      
-      // Call the onAction callback provided by parent
-      await onAction(action, signal.id, percentage);
-      
-      // Try to trigger haptic feedback for better UX
       try {
-        telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification");
+        telegramService.triggerHapticFeedback(action === "skip" ? "selection" : "notification")
       } catch (e) {
-        // Ignore errors with haptics
+        // Ignore haptic errors
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to process action";
-      
-      // Enhance error message for symbol issues
-      if (errorMessage.includes("Invalid symbol") || errorMessage.includes("Invalid trading symbol")) {
-        setError(`${signal.token} is not available on your exchange. This may be a commodity or token that requires a different exchange.`);
-      } else if (errorMessage.includes("Error 400") || errorMessage.includes("API error")) {
-        setError(`Exchange API error: Unable to trade ${signal.token}. This asset may not be supported.`);
-      } else {
-        setError(errorMessage);
-      }
-      
-      logger.error(`Error processing signal action: ${errorMessage}`);
+      const errorMessage = err instanceof Error ? err.message : "Failed to process action"
+      setError(errorMessage)
+      logger.error(`Error processing signal action: ${errorMessage}`)
     } finally {
-      setIsLoading(false);
-      setActionType(null);
+      setIsLoading(false)
+      setActionType(null)
     }
-  };
+  }
 
   const getRiskColor = (risk: string): string => {
     switch (risk) {
@@ -205,50 +150,28 @@ export function SignalCard({
     }
   }
 
-  // Calculate progress percentage for timer
-  const totalTime = 10 * 60 // 10 minutes in seconds
-  const progressPercentage = Math.min(100, Math.max(0, (timeLeft / totalTime) * 100))
-  const isTimeRunningOut = timeLeft < 60 && timeLeft > 0 // Less than 1 minute left but not expired
+  const progressPercentage = Math.min(100, Math.max(0, (timeLeft / 600) * 100))
+  const isTimeRunningOut = timeLeft < 60 && timeLeft > 0
 
-  // Format the received time to show when the signal was created
-  const getFormattedTime = (): string => {
-    if (!signalTimestamp) return "Unknown time";
-    try {
-      return signalTimestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch (e) {
-      return "Unknown time";
-    }
-  }
-
-  // Get time since the signal was received
   const getTimeSinceReceived = (): string => {
-    if (!signalTimestamp) return "Unknown time";
+    if (!signalTimestamp) return "Unknown time"
     
     try {
-      const now = new Date();
-      const diffMs = now.getTime() - signalTimestamp.getTime();
-      const diffMins = Math.floor(diffMs / 60000);
+      const now = new Date()
+      const diffMs = now.getTime() - signalTimestamp.getTime()
+      const diffMins = Math.floor(diffMs / 60000)
       
       if (diffMins < 1) {
-        return "Just now";
+        return "Just now"
       } else if (diffMins === 1) {
-        return "1m ago";
+        return "1m ago"
       } else if (diffMins < 60) {
-        return `${diffMins}m ago`;
-      } else if (diffMins < 24 * 60) {
-        return `${Math.floor(diffMins / 60)}h ago`;
+        return `${diffMins}m ago`
       } else {
-        return `${Math.floor(diffMins / (60 * 24))}d ago`;
+        return `${Math.floor(diffMins / 60)}h ago`
       }
     } catch (e) {
-      logger.error(`Error formatting time: ${e instanceof Error ? e.message : "Unknown error"}`);
-      return "Unknown time";
-    }
-  }
-
-  const handleOpenLink = (): void => {
-    if (signal.link) {
-      window.open(signal.link, "_blank")
+      return "Unknown time"
     }
   }
 
@@ -282,145 +205,95 @@ export function SignalCard({
           </div>
         </div>
 
-        {/* Position accumulation indicator for BUY signals */}
-        {signal.type === "BUY" && accumulatedPercentage > 0 && (
-          <div className="mt-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-md">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-sm font-medium text-green-800 dark:text-green-300">Position Built:</span>
-              <span className="text-sm font-bold text-green-800 dark:text-green-300">{accumulatedPercentage}%</span>
-            </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
-              <div 
-                className="bg-green-500 h-2.5 rounded-full" 
-                style={{ width: `${Math.min(accumulatedPercentage, 100)}%` }}
-              ></div>
-            </div>
-            <p className="mt-2 text-xs text-green-700 dark:text-green-400">
-              You've bought {accumulatedPercentage}% of your portfolio in {signal.token}. 
-              You can click "Buy 10%" multiple times to build a larger position.
-            </p>
-          </div>
-        )}
-
-        {/* Signal details section (positives/warnings) */}
-        {((signal.positives && signal.positives.length > 0) || (signal.warnings && signal.warnings.length > 0)) && (
-          <div className="mt-4">
-            <Button
-              variant="ghost"
-              className="p-0 h-auto text-sm text-muted-foreground flex items-center"
-              onClick={() => setShowDetails(!showDetails)}
-            >
-              {showDetails ? "Hide" : "Show"} signal details
-            </Button>
-
-            {showDetails && (
-              <div className="mt-2 space-y-2 text-sm">
-                {signal.positives && signal.positives.length > 0 && (
-                  <div className="space-y-1">
-                    <p className="font-medium">Positives:</p>
-                    <ul className="space-y-1">
-                      {signal.positives.map((positive, index) => (
-                        <li key={index} className="flex items-start">
-                          <Check className="h-4 w-4 mr-1 text-green-500 mt-0.5" />
-                          <span>{positive}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {signal.warnings && signal.warnings.length > 0 && (
-                  <div className="space-y-1">
-                    <p className="font-medium">Warnings:</p>
-                    <ul className="space-y-1">
-                      {signal.warnings.map((warning, index) => (
-                        <li key={index} className="flex items-start">
-                          <X className="h-4 w-4 mr-1 text-red-500 mt-0.5" />
-                          <span>{warning}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {signal.link && (
-                  <Button variant="outline" size="sm" className="mt-2 text-xs h-8" onClick={handleOpenLink}>
-                    <ExternalLink className="h-3 w-3 mr-1" />
-                    View Chart
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Auto-execution timer - Only show if exchange is connected and the signal is not expired */}
-        {exchangeConnected && !isSignalExpired && (
-          <div className="mt-4 relative">
-            <div className="flex justify-between text-xs mb-1">
-              <span className="font-medium">Auto-execution in {formatTime(timeLeft)}</span>
-              <span className="font-medium">
-                {signal.type === "BUY" 
-                  ? "Will buy 10%" 
-                  : "Will sell fully"}
-              </span>
-            </div>
-            <Progress value={progressPercentage} className={`h-2 ${isTimeRunningOut ? "bg-red-200" : ""}`} />
-            
-            {/* Auto-execution messaging */}
-            <div className={`mt-3 p-3 rounded-md ${isTimeRunningOut ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" : "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"}`}>
-              <div className="flex items-start">
-                {isTimeRunningOut ? (
-                  <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 mr-2 flex-shrink-0 animate-pulse" />
-                ) : (
-                  <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 mr-2 flex-shrink-0" />
-                )}
-                <div>
-                  <p className={`text-sm font-medium ${isTimeRunningOut ? "text-red-800 dark:text-red-300" : "text-amber-800 dark:text-amber-300"}`}>
-                    {isTimeRunningOut ? "Auto-execution imminent!" : "Auto-execution will occur when timer expires"}
-                  </p>
-                  <p className={`text-xs mt-1 ${isTimeRunningOut ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400"}`}>
-                    {signal.type === "BUY" 
-                      ? `If you don't take action, the system will automatically buy ${signal.token} worth 10% of your portfolio.`
-                      : `If you don't take action, the system will automatically sell all your ${signal.token} holdings.`}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Expired signal banner */}
-        {isSignalExpired && (
+        {!canExecute && (
           <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-900/20 rounded-md border border-gray-200 dark:border-gray-800">
             <div className="flex items-start">
               <AlertCircle className="h-5 w-5 text-gray-600 dark:text-gray-400 mt-0.5 mr-2 flex-shrink-0" />
               <div>
                 <p className="text-sm font-medium text-gray-800 dark:text-gray-300">
-                  Signal received at {getFormattedTime()}
+                  Signal has expired
                 </p>
                 <p className="text-xs mt-1 text-gray-700 dark:text-gray-400">
-                  This signal has expired. Auto-execution timeout has passed.
+                  This signal is older than 10 minutes and can no longer be executed.
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Information banner when no exchange is connected */}
-        {!exchangeConnected && (
-          <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/30 rounded-md border border-blue-200 dark:border-blue-800">
-            <div className="flex items-start">
-              <Info className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 mr-2 flex-shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
-                  Exchange connection required to execute trades
-                </p>
-                <p className="text-xs mt-1 text-blue-700 dark:text-blue-400">
-                  Connect your exchange to execute trades based on this signal. Your API keys will be securely encrypted.
-                </p>
-              </div>
+        {canExecute && timeLeft > 0 && exchangeConnected && (
+          <div className="mt-4 relative">
+            <div className="flex justify-between text-xs mb-1">
+              <span className="font-medium">Execute within {formatTime(timeLeft)}</span>
+              <span className="font-medium">
+                {signal.type === "BUY" ? "10% position" : "Full sell"}
+              </span>
             </div>
+            <Progress value={progressPercentage} className={`h-2 ${isTimeRunningOut ? "bg-red-200" : ""}`} />
+            
+            {isTimeRunningOut && (
+              <div className="mt-2 text-xs text-red-600 dark:text-red-400">
+                <AlertCircle className="h-3 w-3 inline mr-1" />
+                Signal expires soon - execute now!
+              </div>
+            )}
+          </div>
+        )}
+
+        {showDetails && (signal.positives?.length || signal.warnings?.length) && (
+          <div className="mt-4 space-y-2 text-sm">
+            {signal.positives && signal.positives.length > 0 && (
+              <div className="space-y-1">
+                <p className="font-medium">Positives:</p>
+                <ul className="space-y-1">
+                  {signal.positives.map((positive, index) => (
+                    <li key={index} className="flex items-start">
+                      <Check className="h-4 w-4 mr-1 text-green-500 mt-0.5" />
+                      <span>{positive}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {signal.warnings && signal.warnings.length > 0 && (
+              <div className="space-y-1">
+                <p className="font-medium">Warnings:</p>
+                <ul className="space-y-1">
+                  {signal.warnings.map((warning, index) => (
+                    <li key={index} className="flex items-start">
+                      <X className="h-4 w-4 mr-1 text-red-500 mt-0.5" />
+                      <span>{warning}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {((signal.positives?.length || signal.warnings?.length) || signal.link) && (
+          <div className="mt-4 flex items-center gap-2">
+            {(signal.positives?.length || signal.warnings?.length) ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowDetails(!showDetails)}
+              >
+                {showDetails ? "Hide" : "Show"} details
+              </Button>
+            ) : null}
+            
+            {signal.link && (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => window.open(signal.link, "_blank")}
+              >
+                <ExternalLink className="h-3 w-3 mr-1" />
+                Chart
+              </Button>
+            )}
           </div>
         )}
 
@@ -434,98 +307,56 @@ export function SignalCard({
       <CardFooter className="flex justify-between">
         {signal.type === "BUY" ? (
           <>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex-1 mr-2">
-                    <Button
-                      variant={exchangeConnected ? "default" : "default"}
-                      className={`w-full ${!exchangeConnected ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
-                      onClick={() => handleAction("accept")}
-                      disabled={isLoading || isSignalExpired}
-                    >
-                      {isLoading && actionType === "full" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                      {exchangeConnected ? "Buy 10%" : "Connect Exchange"}
-                    </Button>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {exchangeConnected 
-                    ? "Purchase 10% of your total portfolio size. Click multiple times to build a larger position." 
-                    : "Connect your exchange to execute trades"}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <Button
+              variant={exchangeConnected ? "default" : "default"}
+              className={`w-full mr-2 ${!exchangeConnected ? "bg-blue-600 hover:bg-blue-700" : ""}`}
+              onClick={() => handleAction("accept")}
+              disabled={isLoading || !canExecute}
+            >
+              {isLoading && actionType === "full" && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              {exchangeConnected ? "Buy 10%" : "Connect Exchange"}
+            </Button>
             <Button 
               variant="outline" 
-              className="w-full col-span-2" 
+              className="w-full"
               onClick={() => handleAction("skip")} 
               disabled={isLoading}
             >
-              {isLoading && actionType === "skip" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Skip This Signal
+              {isLoading && actionType === "skip" && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Skip
             </Button>
           </>
         ) : (
-          <div className="grid grid-cols-2 gap-2 w-full">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="default"
-                    className="w-full"
-                    onClick={() => handleAction("accept")}
-                    disabled={isLoading || isSignalExpired}
-                  >
-                    {isLoading && actionType === "full" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Sell Fully
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Sell your entire position of {signal.token}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+          <div className="grid grid-cols-3 gap-2 w-full">
+            <Button
+              variant="default"
+              onClick={() => handleAction("accept")}
+              disabled={isLoading || !canExecute || !userOwnsToken}
+            >
+              {isLoading && actionType === "full" && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Sell All
+            </Button>
             
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="w-full bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 hover:bg-amber-100"
-                    onClick={() => handleAction("accept-partial", 50)}
-                    disabled={isLoading || isSignalExpired}
-                  >
-                    {isLoading && actionType === "partial" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    Sell 50%
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Sell half of your {signal.token} holdings
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <Button
+              variant="outline"
+              onClick={() => handleAction("accept-partial", 50)}
+              disabled={isLoading || !canExecute || !userOwnsToken}
+            >
+              {isLoading && actionType === "partial" && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Sell 50%
+            </Button>
             
             <Button 
-              variant="outline" 
-              className="w-full col-span-2" 
+              variant="outline"
               onClick={() => handleAction("skip")} 
               disabled={isLoading}
             >
-              {isLoading && actionType === "skip" ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Skip This Signal
+              {isLoading && actionType === "skip" && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Skip
             </Button>
           </div>
         )}
       </CardFooter>
-      
-      {/* Information banner for SELL signals */}
-      {signal.type === "SELL" && (
-        <div className="px-6 pb-4 flex items-center text-xs text-muted-foreground">
-          <Info className="h-3 w-3 mr-1" />
-          <span>SELL signals are only shown for tokens you already own</span>
-        </div>
-      )}
     </Card>
   )
 }
