@@ -382,12 +382,13 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
    private portfolioCache: Map<string, { data: any; timestamp: number }> = new Map();
   private readonly CACHE_DURATION = 30000;
 
-// lib/trading-proxy.ts - Update the getPortfolio method
+// lib/trading-proxy.ts
 public async getPortfolio(userId: string | number): Promise<any> {
   try {
     const cacheKey = `portfolio_${userId}`;
     const cached = this.portfolioCache.get(cacheKey);
 
+    // Return cached data if fresh (within 30 seconds)
     if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
       logger.info(`Returning cached portfolio for user ${userId}`);
       return cached.data;
@@ -397,37 +398,41 @@ public async getPortfolio(userId: string | number): Promise<any> {
       context: 'TradingProxy'
     });
 
-    // Use the optimized endpoint
-    try {
-      const response = await fetch(`${this.proxyServerUrl}/api/user/${userId}/portfolio/optimized`, {
-        signal: AbortSignal.timeout(this.defaultTimeout)
-      });
+    // Use the simple endpoint
+    const response = await fetch(`${this.proxyServerUrl}/api/user/${userId}/portfolio/simple`, {
+      signal: AbortSignal.timeout(10000) // 10 second timeout
+    });
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error('API keys not found or not registered');
-        }
-        throw new Error(`Portfolio fetch failed: ${response.status}`);
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('API keys not found or not registered');
       }
-
-      const portfolioData = await response.json();
-
-      // Cache the result
-      this.portfolioCache.set(cacheKey, {
-        data: portfolioData,
-        timestamp: Date.now()
-      });
-
-      return portfolioData;
-    } catch (error) {
-      // Fallback to the old method if optimized endpoint is not available
-      logger.warn(`Optimized portfolio endpoint failed, falling back to standard method: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      
-      // Use your existing portfolio fetching logic as fallback
-      return this.getPortfolioFallback(userId);
+      throw new Error(`Portfolio fetch failed: ${response.status}`);
     }
+
+    const portfolioData = await response.json();
+    
+    // Add calculated fields for compatibility
+    const enhancedData = {
+      ...portfolioData,
+      realizedPnl: 0, // These would need trade history
+      unrealizedPnl: 0, // These would need entry prices
+    };
+
+    // Cache the result
+    this.portfolioCache.set(cacheKey, {
+      data: enhancedData,
+      timestamp: Date.now()
+    });
+
+    logger.info(`Portfolio fetched: $${portfolioData.totalValue}`, {
+      context: 'TradingProxy',
+      userId
+    });
+
+    return enhancedData;
   } catch (error) {
-    logger.error(`Error fetching portfolio from proxy: ${error instanceof Error ? error.message : "Unknown error"}`);
+    logger.error(`Error fetching portfolio: ${error instanceof Error ? error.message : "Unknown error"}`);
     throw error;
   }
 }
