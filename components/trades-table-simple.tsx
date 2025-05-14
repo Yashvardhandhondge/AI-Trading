@@ -37,14 +37,34 @@ export function TradesTableSimple({ userId }: TradesTableProps) {
   const [lastSync, setLastSync] = useState<Date | null>(null)
   
   // Fetch trades (this will auto-sync if needed)
-  const fetchTrades = async (forceSync = false) => {
-    try {
-      setIsLoading(true)
-      setError(null)
+// In your component that fetches trades
+const fetchTrades = async (forceSync = false) => {
+  try {
+    setIsLoading(true)
+    setError(null)
+    
+    if (forceSync) {
+      // Use POST for syncing
+      const response = await fetch('/api/trades', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          limit: 100,
+          forceSync: true
+        })
+      })
       
-      // Use the new API endpoint
-      const url = `/api/trades${forceSync ? '?forceSync=true' : ''}`
-      const response = await fetch(url)
+      if (!response.ok) {
+        throw new Error(`Failed to sync trades: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      setTrades(data.trades || [])
+    } else {
+      // Use GET for normal fetching
+      const response = await fetch('/api/trades')
       
       if (!response.ok) {
         throw new Error(`Failed to fetch trades: ${response.status}`)
@@ -52,19 +72,15 @@ export function TradesTableSimple({ userId }: TradesTableProps) {
       
       const data = await response.json()
       setTrades(data.trades || [])
-      setLastSync(new Date())
-      
-      logger.info(`Fetched ${data.trades?.length || 0} trades`, {
-        context: "TradesTable"
-      })
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to load trades"
-      setError(errorMessage)
-      logger.error(`Error fetching trades: ${errorMessage}`)
-    } finally {
-      setIsLoading(false)
     }
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : "Failed to load trades"
+    setError(errorMessage)
+    console.log("Error fetching trades:",err )
+  } finally {
+    setIsLoading(false)
   }
+}
   
   // Manual sync
   const handleManualSync = async () => {
