@@ -1,6 +1,8 @@
+// app/api/trades/route.ts
 import { type NextRequest, NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/auth"
-import { TradeSyncService } from "@/lib/trade-sync-service"
+import { connectToDatabase, models } from "@/lib/db"
+import { tradingProxy } from "@/lib/trading-proxy"
 import { logger } from "@/lib/logger"
 
 export async function GET(request: NextRequest) {
@@ -11,44 +13,53 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Get query parameters
-    const searchParams = request.nextUrl.searchParams
-    const forceSync = searchParams.get("forceSync") === "true"
+    logger.info(`Fetching trades for user ${sessionUser.id}`)
 
-    // Get trades using TradeSyncService
-    const result = await TradeSyncService.getStoredTrades(sessionUser.id, {
-      limit: 50,
-      offset: 0,
-    })
+    // Connect to database
+    await connectToDatabase()
 
-    return NextResponse.json(result)
-  } catch (error) {
-    logger.error("Error fetching trades:", error instanceof Error ? error : new Error(String(error)))
-    return NextResponse.json({ error: "Failed to fetch trades" }, { status: 500 })
-  }
-}
+    // Get user data
+    const user = await models.User.findOne({ telegramId: sessionUser.id })
 
-export async function POST(request: NextRequest) {
-  try {
-    const sessionUser = await getSessionUser()
-
-    if (!sessionUser) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    // Parse request body
-    const body = await request.json()
-    const { limit = 100, forceSync = true } = body
+    // If exchange is not connected, return empty trades
+    if (!user.exchangeConnected) {
+      return NextResponse.json({
+        trades: [],
+        count: 0,
+        message: "Exchange not connected"
+      })
+    }
 
-    // Sync trades using TradeSyncService
-    const result = await TradeSyncService.syncUserTrades(sessionUser.id, {
-      limit,
-      forceSync
-    })
-
-    return NextResponse.json(result)
+    try {
+      // Get trades from proxy
+      const trades = await tradingProxy.getUserTrades(sessionUser.id)
+      
+      logger.info(`Fetched ${trades.length} trades for user ${sessionUser.id}`)
+      
+      return NextResponse.json({
+        trades: trades,
+        count: trades.length,
+        source: 'binance'
+      })
+    } catch (proxyError) {
+      logger.error(`Error fetching trades from proxy: ${proxyError instanceof Error ? proxyError.message : "Unknown error"}`)
+      
+      // Return empty array instead of throwing
+      return NextResponse.json({
+        trades: [],
+        count: 0,
+        error: proxyError instanceof Error ? proxyError.message : "Failed to fetch trades"
+      })
+    }
   } catch (error) {
-    logger.error("Error syncing trades:", error instanceof Error ? error : new Error(String(error)))
-    return NextResponse.json({ error: "Failed to sync trades" }, { status: 500 })
+    logger.error(`Error in trades endpoint: ${error instanceof Error ? error.message : "Unknown error"}`)
+    return NextResponse.json({ 
+      error: "Failed to fetch trades",
+      details: error instanceof Error ? error.message : "Unknown error" 
+    }, { status: 500 })
   }
 }
