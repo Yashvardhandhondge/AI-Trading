@@ -99,7 +99,7 @@ export function ExchangeSetup({ user, onComplete }: ExchangeSetupProps) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          userId: effectiveUserId,
+          userId: effectiveUserId.toString(),
           apiKey,
           apiSecret,
           exchange
