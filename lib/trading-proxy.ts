@@ -382,101 +382,162 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
    private portfolioCache: Map<string, { data: any; timestamp: number }> = new Map();
   private readonly CACHE_DURATION = 30000;
 
-  public async getPortfolio(userId: string | number): Promise<any> {
+// lib/trading-proxy.ts - Update the getPortfolio method
+public async getPortfolio(userId: string | number): Promise<any> {
+  try {
+    const cacheKey = `portfolio_${userId}`;
+    const cached = this.portfolioCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
+      logger.info(`Returning cached portfolio for user ${userId}`);
+      return cached.data;
+    }
+
+    logger.info(`Getting portfolio for user ${userId}`, {
+      context: 'TradingProxy'
+    });
+
+    // Use the optimized endpoint
     try {
-          const cacheKey = `portfolio_${userId}`;
-      const cached = this.portfolioCache.get(cacheKey);
-
-         if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
-        console.log(`Returning cached portfolio for user ${userId}`);
-        return cached.data;
-      }
-
-      logger.info(`Getting portfolio for user ${userId}`, {
-        context: 'TradingProxy'
+      const response = await fetch(`${this.proxyServerUrl}/api/user/${userId}/portfolio/optimized`, {
+        signal: AbortSignal.timeout(this.defaultTimeout)
       });
 
-        await this.checkRateLimit('getPortfolio');
-
-      // First check if the API keys are registered
-      const hasKeys = await this.checkApiKeyStatus(userId);
-      if (!hasKeys) {
-        throw new Error('API keys not found or not registered');
-      }
-
-      // Get account info from Binance
-      const accountInfo = await this.executeProxyRequest(userId, '/api/v3/account');
-      
-      if (!accountInfo || !accountInfo.balances) {
-        throw new Error('Failed to fetch account information');
-      }
-
-      // Get current prices for all assets      // Use the working getBalances method to get balances
-      const balances = await this.getBalances(userId);
-      
-      // Get current prices for all assets
-      const pricePromises = balances.map(async (balance: any) => {
-        if (['USDT', 'BUSD', 'USDC'].includes(balance.asset)) return 1;
-        try {
-          const price = await this.getPrice(userId, `${balance.asset}USDT`);
-          return price;
-        } catch {
-          return 0;
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error('API keys not found or not registered');
         }
-      });
-
-      const prices = await Promise.all(pricePromises);
-
-      // Calculate portfolio values
-      let totalValue = 0;
-      let freeCapital = 0;
-      let allocatedCapital = 0;
-      const holdings = [];
-
-      for (let i = 0; i < balances.length; i++) {
-        const balance = balances[i];
-        const price = prices[i];
-        const value = balance.total * price;
-
-        if (['USDT', 'BUSD', 'USDC', 'DAI'].includes(balance.asset)) {
-          freeCapital += value;
-        } else if (value > 0) {
-          holdings.push({
-            token: balance.asset,            // Changed from symbol to token
-            amount: balance.total,           // Changed from quantity to amount
-            currentPrice: price,             // Changed from price to currentPrice
-            value: value,
-            pnl: 0,                         // Will be calculated later if needed
-            pnlPercentage: 0                // Will be calculated later if needed
-          });
-          allocatedCapital += value;
-        }
-        totalValue += value;
+        throw new Error(`Portfolio fetch failed: ${response.status}`);
       }
 
-      totalValue = freeCapital + allocatedCapital;
-
-       const portfolioData = {
-        totalValue,
-        freeCapital,
-        allocatedCapital,
-        holdings,
-        realizedPnl: 0,
-        unrealizedPnl: 0
-      };
+      const portfolioData = await response.json();
 
       // Cache the result
       this.portfolioCache.set(cacheKey, {
         data: portfolioData,
         timestamp: Date.now()
       });
+
       return portfolioData;
     } catch (error) {
-      logger.error(`Error fetching portfolio from proxy: ${error instanceof Error ? error.message : "Unknown error"}`);
-      throw error;
+      // Fallback to the old method if optimized endpoint is not available
+      logger.warn(`Optimized portfolio endpoint failed, falling back to standard method: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // Use your existing portfolio fetching logic as fallback
+      return this.getPortfolioFallback(userId);
     }
+  } catch (error) {
+    logger.error(`Error fetching portfolio from proxy: ${error instanceof Error ? error.message : "Unknown error"}`);
+    throw error;
   }
+}
 
+// Add a batch price fetching method
+public async getBatchPrices(userId: string | number): Promise<Record<string, number>> {
+  try {
+    const response = await fetch(`${this.proxyServerUrl}/api/user/${userId}/prices/batch`, {
+      signal: AbortSignal.timeout(this.defaultTimeout)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Batch price fetch failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.prices || {};
+  } catch (error) {
+    logger.error(`Error fetching batch prices: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw error;
+  }
+}
+
+// Fallback method (your existing logic but optimized)
+private async getPortfolioFallback(userId: string | number): Promise<any> {
+  try {
+    // Check API keys first
+    const hasKeys = await this.checkApiKeyStatus(userId);
+    if (!hasKeys) {
+      throw new Error('API keys not found or not registered');
+    }
+
+    // Get account balances and prices in parallel
+    const [accountInfo, batchPrices] = await Promise.all([
+      this.executeProxyRequest(userId, '/api/v3/account'),
+      this.getBatchPrices(userId)
+    ]);
+
+    if (!accountInfo || !accountInfo.balances) {
+      throw new Error('Failed to fetch account information');
+    }
+
+    // Process balances using batch prices
+    const balances = accountInfo.balances
+      .filter((b: any) => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0);
+
+    let totalValue = 0;
+    let freeCapital = 0;
+    let allocatedCapital = 0;
+    const holdings = [];
+
+    for (const balance of balances) {
+      const asset = balance.asset;
+      const total = parseFloat(balance.free) + parseFloat(balance.locked);
+      
+      let value = 0;
+      let currentPrice = 0;
+
+      if (['USDT', 'BUSD', 'USDC', 'DAI'].includes(asset)) {
+        value = total;
+        currentPrice = 1;
+        freeCapital += value;
+      } else {
+        // Try to find price in batch prices
+        const pairs = [`${asset}USDT`, `${asset}BUSD`, `${asset}USDC`];
+        
+        for (const pair of pairs) {
+          if (batchPrices[pair]) {
+            currentPrice = batchPrices[pair];
+            value = total * currentPrice;
+            break;
+          }
+        }
+
+        if (value > 0) {
+          holdings.push({
+            token: asset,
+            amount: total,
+            currentPrice,
+            value,
+            pnl: 0,
+            pnlPercentage: 0
+          });
+          allocatedCapital += value;
+        }
+      }
+
+      totalValue += value;
+    }
+
+    const portfolioData = {
+      totalValue,
+      freeCapital,
+      allocatedCapital,
+      holdings: holdings.sort((a, b) => b.value - a.value),
+      realizedPnl: 0,
+      unrealizedPnl: 0
+    };
+
+    // Cache the result
+    this.portfolioCache.set(`portfolio_${userId}`, {
+      data: portfolioData,
+      timestamp: Date.now()
+    });
+
+    return portfolioData;
+  } catch (error) {
+    throw error;
+  }
+}
   /**
    * Validate if a symbol exists on the exchange
    */

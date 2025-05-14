@@ -7,18 +7,13 @@ import { logger } from "@/lib/logger"
 
 export async function GET(request: NextRequest) {
   try {
-    console.log("[DEBUG API] Portfolio request received");
-
     const sessionUser = await getSessionUser()
 
     if (!sessionUser) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Connect to database
     await connectToDatabase()
-
-    // Get user data
     const user = await models.User.findOne({ telegramId: sessionUser.id })
 
     if (!user) {
@@ -29,72 +24,51 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Exchange not connected" }, { status: 400 })
     }
 
-    // Get portfolio data using the trading proxy
+    // Try to get fresh data with timeout
     try {
-      console.log("[DEBUG API] Fetching portfolio from proxy...");
+      const portfolioData = await Promise.race([
+        tradingProxy.getPortfolio(sessionUser.id),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 10000)
+        )
+      ]);
 
-      // Check if portfolio exists in database
+      // Update database with fresh data
       let portfolio = await models.Portfolio.findOne({ userId: user._id })
 
       if (!portfolio) {
-        // Initialize portfolio using the trading proxy
-        const portfolioData = await tradingProxy.getPortfolio(sessionUser.id)
-
-        // Create portfolio document from the data received from trading proxy
         portfolio = await models.Portfolio.create({
           userId: user._id,
-          totalValue: portfolioData.totalValue,
-          freeCapital: portfolioData.freeCapital,
-          allocatedCapital: portfolioData.allocatedCapital,
-          holdings: portfolioData.holdings,
+          ...portfolioData,
           updatedAt: new Date(),
         })
-        
-        logger.info("Created new portfolio for user", {
-          context: "Portfolio",
-          userId: sessionUser.id
-        })
       } else {
-        // Optionally refresh portfolio data if it's stale
-        const lastUpdate = new Date(portfolio.updatedAt ?? new Date()).getTime()
-        const now = Date.now()
-        const fiveMinutes = 5 * 60 * 1000
-        
-        if (now - lastUpdate > fiveMinutes) {
-          try {
-            const portfolioData = await tradingProxy.getPortfolio(sessionUser.id)
-            
-            // Update the portfolio with fresh data
-            portfolio.totalValue = portfolioData.totalValue
-            portfolio.freeCapital = portfolioData.freeCapital
-            portfolio.allocatedCapital = portfolioData.allocatedCapital
-            portfolio.holdings = portfolioData.holdings
-            portfolio.updatedAt = new Date()
-            await portfolio.save()
-            
-            logger.info("Updated portfolio with fresh data", {
-              context: "Portfolio",
-              userId: sessionUser.id
-            })
-          } catch (error) {
-            logger.warn(`Failed to update portfolio data: ${error instanceof Error ? error.message : "Unknown error"}`, {
-              context: "Portfolio",
-              userId: sessionUser.id
-            })
-            // Continue with existing portfolio data
-          }
-        }
+        portfolio = await models.Portfolio.findOneAndUpdate(
+          { userId: user._id },
+          { ...portfolioData, updatedAt: new Date() },
+          { new: true }
+        )
       }
 
       return NextResponse.json(portfolio)
     } catch (error) {
-      const errorMessage = error instanceof Error ? error : "Unknown error"
-      logger.error(`Failed to fetch portfolio data: ${errorMessage}`)
+      logger.warn(`Failed to fetch fresh portfolio data: ${error instanceof Error ? error.message : 'Unknown error'}`)
       
-      return NextResponse.json({ error: "Failed to fetch portfolio data" }, { status: 500 })
+      // Return cached data if available
+      const cachedPortfolio = await models.Portfolio.findOne({ userId: user._id })
+      
+      if (cachedPortfolio) {
+        return NextResponse.json({
+          ...cachedPortfolio.toObject(),
+          _cached: true,
+          _cacheAge: Date.now() - (cachedPortfolio.updatedAt ?? new Date()).getTime()
+        })
+      }
+      
+      throw error;
     }
   } catch (error) {
-    logger.error(`Error in portfolio endpoint: ${error instanceof Error ? error.message : "Unknown error"}`)
+    logger.error(`Error in portfolio endpoint: ${error instanceof Error ? error.message : 'Unknown error'}`)
     return NextResponse.json({ error: "Failed to fetch portfolio data" }, { status: 500 })
   }
 }
