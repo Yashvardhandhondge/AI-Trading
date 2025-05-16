@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, TrendingDown, RefreshCw, Loader2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, RefreshCw, Loader2, AlertCircle } from 'lucide-react';
 import { formatCurrency } from "@/lib/utils";
 import { tradingProxy } from "@/lib/trading-proxy";
+import { toast } from "sonner";
 
 // Define data interfaces
 interface PositionData {
@@ -17,6 +18,7 @@ interface PositionData {
 interface Cycle {
   id: string;
   token: string;
+  state: string;
 }
 
 // Type component props
@@ -28,6 +30,7 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [positionAccumulation, setPositionAccumulation] = useState<Record<string, number>>({});
+  const [cycles, setCycles] = useState<Cycle[]>([]);
   
   const fetchPositions = async (showLoadingState = true): Promise<void> => {
     try {
@@ -39,13 +42,23 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
       
       setError(null);
       
-      // Use trading proxy to get portfolio data
-      const data = await tradingProxy.getPortfolio(userId);
+      // Fetch both portfolio data and active cycles in parallel
+      const [portfolioData, cyclesResponse] = await Promise.all([
+        tradingProxy.getPortfolio(userId),
+        fetch('/api/cycles/active').then(res => res.json())
+      ]);
+      
+      // Store cycles for later use when selling
+      if (cyclesResponse.cycles && Array.isArray(cyclesResponse.cycles)) {
+        setCycles(cyclesResponse.cycles);
+        console.log("Found active cycles:", cyclesResponse.cycles);
+      }
       
       // Process holdings to display in the table
-      if (data.holdings && data.holdings.length > 0) {
+      if (portfolioData.holdings && portfolioData.holdings.length > 0) {
         // Filter out stablecoins
-        const stablecoins = ['USDT', 'USDC', 'BUSD', 'DAI'];        const filteredHoldings = data.holdings.filter(
+        const stablecoins = ['USDT', 'USDC', 'BUSD', 'DAI'];
+        const filteredHoldings = portfolioData.holdings.filter(
           (h: { token: string; amount: number }) => h.amount > 0 && !stablecoins.includes(h.token)
         );
         
@@ -91,67 +104,106 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
     try {
       setIsRefreshing(true);
       
-      // Find the active cycle for this token
-      const response = await fetch('/api/cycles/active');
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch cycles: ${response.status}`);
+      // Validate the token can be traded
+      const symbol = `${token}USDT`;
+      try {
+        await tradingProxy.validateSymbol(userId, symbol);
+      } catch (error) {
+        toast.error(`Invalid trading pair: ${symbol}`);
+        return;
       }
-      
-      const data: { cycles?: Cycle[] } = await response.json();
-      
-      if (!data.cycles || data.cycles.length === 0) {
-        throw new Error("No active cycles found");
+
+      // Get current price with retry
+      let currentPrice: number;
+      try {
+        currentPrice = await tradingProxy.getPrice(userId, symbol);
+        if (!currentPrice) throw new Error('Could not get current price');
+      } catch (error) {
+        toast.error(`Cannot get current price for ${token}. Please try again.`);
+        return;
       }
+
+      // Find or create cycle
+      let cycleId = null;
+      const existingCycle = cycles.find(c => c.token === token && ['entry', 'hold'].includes(c.state));
       
-      // Find the cycle for this token
-      const cycle = data.cycles.find(c => c.token === token);
-      
-      if (!cycle) {
-        throw new Error(`No active cycle found for ${token}`);
-      }
-      
-      // Execute sell order
-      const sellResponse = await fetch('/api/cycles/active', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          cycleId: cycle.id,
-          percentage
-        })
-      });
-      
-      if (!sellResponse.ok) {
-        const errorData: { error?: string } = await sellResponse.json();
-        throw new Error(errorData.error || 'Failed to sell position');
-      }
-      
-      // If selling fully, update position accumulation
-      if (percentage === 100) {
-        const newAccumulation = { ...positionAccumulation };
-        delete newAccumulation[token];
-        setPositionAccumulation(newAccumulation);
-        
-        // Update localStorage
-        localStorage.setItem('positionAccumulation', JSON.stringify(newAccumulation));
+      if (existingCycle) {
+        cycleId = existingCycle.id;
       } else {
-        // For partial sells, reduce the accumulated percentage
-        const currentAccumulation = positionAccumulation[token] || 0;
-        if (currentAccumulation > 0) {
-          const newPercentage = Math.max(0, currentAccumulation - (currentAccumulation * (percentage / 100)));
-          const newAccumulation = { ...positionAccumulation, [token]: newPercentage };
-          setPositionAccumulation(newAccumulation);
-          localStorage.setItem('positionAccumulation', JSON.stringify(newAccumulation));
+        try {
+          const response = await fetch('/api/cycles/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId,
+              token,
+              initialState: 'hold',
+              currentPrice
+            })
+          });
+          
+          if (!response.ok) throw new Error('Failed to create cycle');
+          const newCycle = await response.json();
+          cycleId = newCycle.id;
+          setCycles(prev => [...prev, newCycle]);
+        } catch (err) {
+          toast.error(`Failed to initialize sell order for ${token}`);
+          throw err;
         }
       }
-      
-      // Refresh positions after successful sell
-      fetchPositions();
+
+      // Execute sell with retries
+      const executeSell = async () => {
+        const sellResponse = await fetch('/api/cycles/active', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cycleId,
+            token,
+            percentage,
+            userId,
+            currentPrice
+          })
+        });
+
+        if (!sellResponse.ok) {
+          const error = await sellResponse.json();
+          throw new Error(error.message || 'Failed to sell position');
+        }
+
+        return await sellResponse.json();
+      };
+
+      const MAX_RETRIES = 3;
+      let attempt = 0;
+      let success = false;
+
+      while (attempt < MAX_RETRIES && !success) {
+        try {
+          const result = await executeSell();
+          success = true;
+          toast.success(`Successfully sold ${percentage}% of ${token}`);
+          
+          // Update local state
+          if (percentage === 100) {
+            setPositionAccumulation(prev => {
+              const next = { ...prev };
+              delete next[token];
+              localStorage.setItem('positionAccumulation', JSON.stringify(next));
+              return next;
+            });
+          }
+          
+          fetchPositions();
+        } catch (error) {
+          attempt++;
+          if (attempt === MAX_RETRIES) throw error;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
     } catch (err) {
       console.error('Error selling position:', err);
-      setError((err as Error).message);
+      toast.error(`Failed to sell ${token}: ${(err as Error).message}`);
     } finally {
       setIsRefreshing(false);
     }
@@ -184,8 +236,9 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
       
       <CardContent className="p-0">
         {error && (
-          <div className="p-4 text-red-500">
-            Error: {error}
+          <div className="p-4 text-red-500 flex items-center">
+            <AlertCircle className="h-4 w-4 mr-2" />
+            <p>{error}</p>
           </div>
         )}
         
@@ -229,11 +282,13 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
                     <td className="py-3 px-4 text-sm">
                       <div className="flex gap-1">
                         <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
-                          onClick={() => handleSellPosition(position.token, 50)}>
+                          onClick={() => handleSellPosition(position.token, 50)}
+                          disabled={isRefreshing}>
                           Sell 50%
                         </Button>
                         <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
-                          onClick={() => handleSellPosition(position.token)}>
+                          onClick={() => handleSellPosition(position.token)}
+                          disabled={isRefreshing}>
                           Sell All
                         </Button>
                       </div>

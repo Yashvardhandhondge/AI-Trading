@@ -131,133 +131,57 @@ export async function GET(request: NextRequest) {
 }
 
 // Add a new endpoint to sell positions
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
-    const sessionUser = await getSessionUser()
+    const { cycleId, token, percentage, userId, currentPrice } = await request.json();
 
-    if (!sessionUser) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!cycleId || !token || !userId) {
+      return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
     }
 
-    // Get request body
-    const { cycleId, percentage = 100 } = await request.json()
-    
-    if (!cycleId) {
-      return NextResponse.json({ error: "Cycle ID is required" }, { status: 400 })
-    }
-    
-    // Validate percentage
-    if (percentage <= 0 || percentage > 100) {
-      return NextResponse.json({ error: "Percentage must be between 1 and 100" }, { status: 400 })
-    }
-
-    // Connect to database
-    await connectToDatabase()
-
-    // Get user data
-    const user = await models.User.findOne({ telegramId: sessionUser.id })
-
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 })
+    // Validate the trading pair
+    const symbol = `${token}USDT`;
+    try {
+      const isValid = await tradingProxy.validateSymbol(userId, symbol);
+      if (!isValid) {
+        return NextResponse.json({ error: 'Invalid trading pair' }, { status: 400 });
+      }
+    } catch (error) {
+      logger.error(`Symbol validation error: ${error}`);
+      return NextResponse.json({ error: 'Failed to validate trading pair' }, { status: 400 });
     }
 
-    // Check if exchange is connected
-    if (!user.exchangeConnected) {
-      return NextResponse.json({ error: "Exchange not connected" }, { status: 400 })
+    // Get position details
+    const portfolio = await tradingProxy.getPortfolio(userId);
+    const position = portfolio.holdings.find((h: any) => h.token === token);
+    
+    if (!position || !position.amount) {
+      return NextResponse.json({ error: 'Position not found' }, { status: 404 });
     }
 
-    // Find the cycle
-    const cycle = await models.Cycle.findOne({
-      _id: cycleId,
-      userId: user._id
-    })
+    // Calculate sell amount
+    const sellAmount = (position.amount * (percentage / 100)).toFixed(8);
 
-    if (!cycle) {
-      return NextResponse.json({ error: "Cycle not found" }, { status: 404 })
-    }
+    // Execute the trade
+    try {
+      const trade = await tradingProxy.executeTrade(
+        userId,
+        symbol,
+        'SELL',
+        parseFloat(sellAmount),
+        currentPrice
+      );
 
-    // Get entry trade for quantity information
-    const entryTrade = cycle.entryTrade ? 
-      await models.Trade.findById(cycle.entryTrade) : 
-      null
-      
-    if (!entryTrade) {
-      return NextResponse.json({ error: "Entry trade not found for this cycle" }, { status: 404 })
+      return NextResponse.json({ success: true, trade });
+    } catch (error) {
+      logger.error(`Trade execution error: ${error}`);
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Trade execution failed' },
+        { status: 400 }
+      );
     }
-    
-    // Calculate sell amount based on percentage
-    const sellAmount = entryTrade.amount * (percentage / 100)
-    
-    // Get current price
-    const currentPrice = await tradingProxy.getPrice(sessionUser.id, `${cycle.token}USDT`)
-    
-    // Execute sell order
-    const tradeResult = await tradingProxy.executeTrade(
-      sessionUser.id,
-      `${cycle.token}USDT`,
-      "SELL",
-      sellAmount
-    )
-    
-    // Create trade record
-    const trade = await models.Trade.create({
-      userId: user._id,
-      cycleId: cycle._id,
-      type: "SELL",
-      token: cycle.token,
-      price: tradeResult.price || currentPrice,
-      amount: sellAmount,
-      status: "completed",
-      autoExecuted: false,
-      createdAt: new Date(),
-    })
-    
-    // Update cycle based on percentage
-    if (percentage === 100) {
-      // Complete cycle for full sells
-      cycle.exitTrade = trade._id
-      cycle.state = "exit"
-      cycle.exitPrice = tradeResult.price || currentPrice
-      cycle.pnl = ((tradeResult.price || currentPrice) - cycle.entryPrice) * sellAmount
-      cycle.pnlPercentage = ((tradeResult.price || currentPrice) - cycle.entryPrice) / cycle.entryPrice * 100
-      cycle.updatedAt = new Date()
-    } else {
-      // Just update fields for partial sells
-      cycle.updatedAt = new Date()
-      // Store partial exit information
-      cycle.partialExits = cycle.partialExits || []
-      cycle.partialExits.push({
-        tradeId: trade._id,
-        percentage,
-        price: tradeResult.price || currentPrice,
-        amount: sellAmount,
-        timestamp: new Date()
-      })
-    }
-    
-    await cycle.save()
-    
-    // Create notification
-    await models.Notification.create({
-      userId: user._id,
-      type: "trade",
-      message: `Sold ${percentage}% of ${cycle.token} at ${tradeResult.price || currentPrice}`,
-      relatedId: trade._id,
-      createdAt: new Date(),
-    })
-    
-    logger.info(`Successfully executed ${percentage}% sell for ${cycle.token}`, {
-      context: "CyclesSell",
-      userId: sessionUser.id
-    })
-    
-    return NextResponse.json({
-      success: true,
-      trade,
-      cycle: cycle.toObject()
-    })
   } catch (error) {
-    logger.error(`Error selling position: ${error instanceof Error ? error.message : "Unknown error"}`)
-    return NextResponse.json({ error: "Failed to sell position" }, { status: 500 })
+    logger.error(`Cycle execution error: ${error}`);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

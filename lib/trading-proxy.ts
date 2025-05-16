@@ -249,20 +249,50 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
   /**
    * Get current price for a trading pair
    */
-  public async getPrice(userId: string | number, symbol: string): Promise<number> {
-    try {
-      const response = await this.executeProxyRequest(userId, '/api/v3/ticker/price', 'GET', { symbol });
-      return Number.parseFloat(response.price);
-    } catch (error) {
-      logger.error(`Error getting price for ${symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      throw error;
+  private readonly priceCacheMap: Map<string, { price: number; timestamp: number }> = new Map();
+  private readonly PRICE_CACHE_DURATION = 10000; // 10 seconds
+
+public async getPrice(userId: string | number, symbol: string): Promise<number> {
+  try {
+    // Check cache first
+    const cached = this.priceCacheMap.get(symbol);
+    if (cached && Date.now() - cached.timestamp < this.PRICE_CACHE_DURATION) {
+      return cached.price;
     }
+
+    const response = await this.executeProxyRequest(userId, '/api/v3/ticker/price', 'GET', { symbol });
+    
+    if (!response || !response.price) {
+      throw new Error(`Invalid price response for ${symbol}`);
+    }
+
+    const price = Number.parseFloat(response.price);
+    
+    // Cache the price
+    this.priceCacheMap.set(symbol, {
+      price,
+      timestamp: Date.now()
+    });
+
+    return price;
+  } catch (error) {
+    logger.error(`Error getting price for ${symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    const cached = this.priceCacheMap.get(symbol);
+    if (cached) {
+      logger.warn(`Returning cached price for ${symbol} due to error`);
+      return cached.price;
+    }
+    throw error;
   }
+}
 
   /**
    * Execute a trade
    */
-  public async executeTrade(
+  private readonly symbolCache: Map<string, boolean> = new Map();
+  private readonly SYMBOL_CACHE_DURATION = 3600000; // 1 hour cache for symbols
+
+public async executeTrade(
     userId: string | number,
     symbol: string,
     side: 'BUY' | 'SELL',
@@ -270,54 +300,84 @@ public async registerApiKey(userId: string | number, apiKey: string, apiSecret: 
     price?: number
   ): Promise<any> {
     try {
-      logger.info(`Executing ${side} trade for ${symbol}`, {
-        context: 'TradingProxy',
-        userId,
-        data: { symbol, side, quantity, price }
-      });
-
-      const response = await fetch(`${this.proxyServerUrl}/api/trade`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          userId: userId.toString(),
-          symbol,
-          side,
-          quantity: quantity.toFixed(8),
-          price: price?.toFixed(8),
-          type: price ? 'LIMIT' : 'MARKET'
-        }),
-        signal: AbortSignal.timeout(this.defaultTimeout)
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: `HTTP error: ${response.status}` }));
-        throw new Error(errorData.message || `Trade execution failed: ${response.status}`);
+      // Validate the symbol and format first
+      if (!await this.validateSymbol(userId, symbol)) {
+        throw new Error(`Invalid trading symbol: ${symbol}`);
       }
 
-      const result = await response.json();
-      
-      logger.info(`Trade executed successfully for ${symbol}`, {
-        context: 'TradingProxy',
-        userId,
-        data: { orderId: result.orderId }
-      });
+      // Add server timestamp for synchronization
+      const serverTime = await this.executeProxyRequest(userId, '/api/v3/time');
+      const timestamp = serverTime.serverTime;
 
-      return {
-        orderId: result.orderId,
-        symbol: result.symbol,
-        side: result.side,
-        quantity: Number(result.executedQty),
-        price: Number(result.price || result.fills?.[0]?.price || 0),
-        status: result.status,
-        timestamp: result.transactTime,
+      const body = {
+        userId: userId.toString(),
+        symbol,
+        side,
+        quantity: parseFloat(quantity.toFixed(8)), // Format to 8 decimal places
+        price: price ? parseFloat(price.toFixed(8)) : undefined,
+        type: price ? 'LIMIT' : 'MARKET',
+        timestamp,
+        recvWindow: 60000 // Add longer receive window
       };
+
+      // Add retry logic for 400 errors
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const response = await fetch(`${this.proxyServerUrl}/api/trade`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(this.defaultTimeout)
+          });
+
+          const responseData = await response.json();
+
+          if (!response.ok) {
+            if (response.status === 400) {
+              // Handle specific Binance error codes
+              const binanceError = responseData.code;
+              switch (binanceError) {
+                case -1021: // INVALID_TIMESTAMP
+                  body.timestamp = Date.now(); // Retry with local timestamp
+                  break;
+                case -1013: // INVALID_QUANTITY
+                  throw new Error(`Invalid quantity: ${quantity}`);
+                case -2010: // INSUFFICIENT_BALANCE
+                  throw new Error('Insufficient balance');
+                default:
+                  throw new Error(responseData.msg || `Trade failed: ${response.status}`);
+              }
+              retries--;
+              continue;
+            }
+            throw new Error(responseData.msg || `Trade failed: ${response.status}`);
+          }
+
+          return this.formatTradeResponse(responseData);
+        } catch (error) {
+          if (retries === 1) throw error;
+          retries--;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
     } catch (error) {
-      logger.error(`Trade execution error: ${error instanceof Error ? error.message : "Unknown error"}`);
+      logger.error(`Trade execution error: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     }
+  }
+
+  private formatTradeResponse(data: any) {
+    return {
+      orderId: data.orderId,
+      symbol: data.symbol,
+      side: data.side,
+      quantity: Number(data.executedQty),
+      price: Number(data.price || data.fills?.[0]?.price || 0),
+      status: data.status,
+      timestamp: data.transactTime,
+      fills: data.fills || []
+    };
   }
 
   /**
