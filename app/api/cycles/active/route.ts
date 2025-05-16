@@ -1,11 +1,12 @@
-// app/api/cycles/active/route.ts - Updated to provide more data for PnL view
+// app/api/cycles/active/route.ts - Updated with improved error handling
 import { type NextRequest, NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/auth"
 import { connectToDatabase, models } from "@/lib/db"
 import { logger } from "@/lib/logger"
 import { tradingProxy } from "@/lib/trading-proxy"
+import mongoose from "mongoose"
 
-// app/api/cycles/active/route.ts - Improved syncPositionsFromExchange function
+// Helper function to sync positions from exchange
 async function syncPositionsFromExchange(user: any): Promise<void> {
   try {
     // Get portfolio from exchange
@@ -49,6 +50,7 @@ async function syncPositionsFromExchange(user: any): Promise<void> {
   }
 }
 
+// GET endpoint to retrieve active cycles
 export async function GET(request: NextRequest) {
   try {
     const sessionUser = await getSessionUser()
@@ -72,6 +74,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Exchange not connected" }, { status: 400 })
     }
 
+    // Try to sync missing positions from exchange
     await syncPositionsFromExchange(user);
 
     // Get active cycles (now including those synced from exchange)
@@ -79,6 +82,7 @@ export async function GET(request: NextRequest) {
       userId: user._id,
       state: { $in: ["entry", "hold", "exit"] },
     }).sort({ updatedAt: -1 })
+    
     // Get current prices for tokens in active cycles
     const enhancedCycles = []
     
@@ -104,6 +108,7 @@ export async function GET(request: NextRequest) {
         
         enhancedCycles.push({
           ...cycle.toObject(),
+          id: cycle._id.toString(), // Ensure ID is a string
           currentPrice: currentPrice || (cycle.entryPrice * 1.1), // Default to +10% if not available
           quantity,
           pnl: pnlValue,
@@ -115,6 +120,7 @@ export async function GET(request: NextRequest) {
         // Add the cycle without enhancements
         enhancedCycles.push({
           ...cycle.toObject(),
+          id: cycle._id.toString(), // Ensure ID is a string
           currentPrice: cycle.entryPrice * 1.1, // Default to +10%
           quantity: 0.4,
           pnl: cycle.pnl || 0,
@@ -130,13 +136,92 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Add a new endpoint to sell positions
-export async function POST(request: Request) {
+// POST endpoint for executing actions on cycles (primarily selling positions)
+export async function POST(request: NextRequest) {
   try {
-    const { cycleId, token, percentage, userId, currentPrice } = await request.json();
+    const sessionUser = await getSessionUser();
+    
+    if (!sessionUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    if (!cycleId || !token || !userId) {
-      return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
+    // Parse request body with fallbacks for missing fields
+    const body = await request.json();
+    const cycleId = body.cycleId;
+    const token = body.token;
+    const percentage = body.percentage || 100;
+    const userId = body.userId || sessionUser.id;
+    const currentPrice = body.currentPrice;
+    
+    logger.info(`Processing sell request: token=${token}, percentage=${percentage}%`, {
+      context: "SellPosition",
+      userId
+    });
+
+    // Connect to database
+    await connectToDatabase();
+
+    // Get user data
+    const user = await models.User.findOne({ telegramId: sessionUser.id });
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Check if exchange is connected
+    if (!user.exchangeConnected) {
+      return NextResponse.json({ error: "Exchange not connected" }, { status: 400 });
+    }
+
+    // Validate required fields with better error messages
+    if (!token) {
+      return NextResponse.json({ error: "Token symbol is required" }, { status: 400 });
+    }
+
+    // If cycleId is missing, try to find an existing cycle for this token
+    let cycle;
+    if (!cycleId) {
+      logger.info(`No cycle ID provided, looking for existing cycle for ${token}`, {
+        context: "SellPosition",
+        userId
+      });
+      
+      cycle = await models.Cycle.findOne({
+        userId: user._id,
+        token: token,
+        state: { $in: ["entry", "hold"] }
+      });
+      
+      if (!cycle) {
+        console.log(`No cycle found for ${token} and cycleId not provided`, {
+          context: "SellPosition",
+          userId
+        });
+        return NextResponse.json({ error: "Cycle ID is required or no existing cycle found" }, { status: 400 });
+      }
+      
+      logger.info(`Found existing cycle for ${token}: ${cycle._id}`, {
+        context: "SellPosition",
+        userId
+      });
+    } else {
+      // Verify the cycle ID is valid and belongs to this user
+      try {
+        if (!mongoose.isValidObjectId(cycleId)) {
+          return NextResponse.json({ error: "Invalid cycle ID format" }, { status: 400 });
+        }
+        
+        cycle = await models.Cycle.findOne({
+          _id: cycleId,
+          userId: user._id
+        });
+        
+        if (!cycle) {
+          return NextResponse.json({ error: "Cycle not found or does not belong to user" }, { status: 404 });
+        }
+      } catch (cycleError) {
+        logger.error(`Error retrieving cycle: ${cycleError instanceof Error ? cycleError.message : "Unknown error"}`);
+        return NextResponse.json({ error: "Failed to retrieve cycle" }, { status: 500 });
+      }
     }
 
     // Validate the trading pair
@@ -147,41 +232,133 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Invalid trading pair' }, { status: 400 });
       }
     } catch (error) {
-      logger.error(`Symbol validation error: ${error}`);
+      logger.error(`Symbol validation error: ${error instanceof Error ? error.message : "Unknown error"}`);
       return NextResponse.json({ error: 'Failed to validate trading pair' }, { status: 400 });
     }
 
-    // Get position details
-    const portfolio = await tradingProxy.getPortfolio(userId);
-    const position = portfolio.holdings.find((h: any) => h.token === token);
-    
-    if (!position || !position.amount) {
-      return NextResponse.json({ error: 'Position not found' }, { status: 404 });
-    }
-
-    // Calculate sell amount
-    const sellAmount = (position.amount * (percentage / 100)).toFixed(8);
-
-    // Execute the trade
+    // Get position details from portfolio
     try {
-      const trade = await tradingProxy.executeTrade(
-        userId,
-        symbol,
-        'SELL',
-        parseFloat(sellAmount),
-        currentPrice
-      );
+      const portfolio = await tradingProxy.getPortfolio(userId);
+      const position = portfolio.holdings.find((h: any) => h.token === token);
+      
+      if (!position || !position.amount) {
+        return NextResponse.json({ error: 'Position not found or zero balance' }, { status: 404 });
+      }
 
-      return NextResponse.json({ success: true, trade });
-    } catch (error) {
-      logger.error(`Trade execution error: ${error}`);
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Trade execution failed' },
-        { status: 400 }
-      );
+      // Calculate sell amount
+      const sellAmount = (parseFloat(position.amount) * (percentage / 100)).toFixed(8);
+      logger.info(`Selling ${sellAmount} ${token} (${percentage}% of position)`, {
+        context: "SellPosition",
+        userId
+      });
+
+      // Get current price if not provided
+      let effectivePrice = currentPrice;
+      if (!effectivePrice) {
+        try {
+          effectivePrice = await tradingProxy.getPrice(userId, symbol);
+        } catch (priceError) {
+          logger.error(`Failed to get price: ${priceError instanceof Error ? priceError.message : "Unknown error"}`);
+          return NextResponse.json({ error: 'Could not get current price' }, { status: 400 });
+        }
+      }
+
+      // Execute the trade
+      try {
+        const trade = await tradingProxy.executeTrade(
+          userId,
+          symbol,
+          'SELL',
+          parseFloat(sellAmount)
+        );
+
+        // Record in database - create Trade record
+        const tradeRecord = await models.Trade.create({
+          userId: user._id,
+          cycleId: cycle._id,
+          type: "SELL",
+          token: token,
+          price: trade.price || effectivePrice,
+          amount: parseFloat(sellAmount),
+          status: "completed",
+          autoExecuted: false,
+          createdAt: new Date()
+        });
+
+        // Update cycle state
+        if (percentage >= 100) {
+          // Complete cycle if selling 100%
+          cycle.exitTrade = tradeRecord._id;
+          cycle.state = "exit";
+          cycle.exitPrice = trade.price || effectivePrice;
+          
+          // Calculate profit/loss
+          const entryAmount = parseFloat(sellAmount); // Approximation, ideally should come from entry trade
+          cycle.pnl = ((trade.price || effectivePrice) - cycle.entryPrice) * entryAmount;
+          cycle.pnlPercentage = ((trade.price || effectivePrice) - cycle.entryPrice) / cycle.entryPrice * 100;
+          
+          cycle.guidance = "Cycle completed via sell action";
+        } else {
+          // For partial sells, record as partial exit
+          if (!cycle.partialExits) {
+            cycle.partialExits = [];
+          }
+          
+          const partialExit = {
+            tradeId: tradeRecord._id,
+            percentage: percentage,
+            price: trade.price || effectivePrice,
+            amount: parseFloat(sellAmount),
+            timestamp: new Date()
+          };
+          
+          cycle.partialExits.push(partialExit);
+          cycle.state = "hold"; // Keep in hold state for partial sells
+          cycle.guidance = `Partially sold ${percentage}% at ${formatCurrency(trade.price || effectivePrice)}`;
+        }
+        
+        cycle.updatedAt = new Date();
+        await cycle.save();
+
+        // Return success response with trade details
+        return NextResponse.json({ 
+          success: true, 
+          trade: {
+            id: tradeRecord._id.toString(),
+            token,
+            price: trade.price || effectivePrice,
+            amount: parseFloat(sellAmount),
+            percentage,
+            timestamp: new Date().toISOString()
+          },
+          cycle: {
+            id: cycle._id.toString(),
+            state: cycle.state
+          }
+        });
+      } catch (tradeError) {
+        logger.error(`Trade execution error: ${tradeError instanceof Error ? tradeError.message : "Unknown error"}`);
+        return NextResponse.json(
+          { error: tradeError instanceof Error ? tradeError.message : 'Trade execution failed' },
+          { status: 400 }
+        );
+      }
+    } catch (portfolioError) {
+      logger.error(`Error fetching portfolio: ${portfolioError instanceof Error ? portfolioError.message : "Unknown error"}`);
+      return NextResponse.json({ error: 'Failed to fetch portfolio data' }, { status: 500 });
     }
   } catch (error) {
-    logger.error(`Cycle execution error: ${error}`);
+    logger.error(`Cycle execution error: ${error instanceof Error ? error.message : "Unknown error"}`);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
+}
+
+// Helper function to format currency for guidance messages
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
 }

@@ -1,3 +1,4 @@
+// Updated PortfolioPositions.tsx with proper cycle handling
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -104,6 +105,53 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
     try {
       setIsRefreshing(true);
       
+      // Try to find the cycle for this token
+      const cycle = cycles.find(c => c.token === token);
+      
+      if (!cycle || !cycle.id) {
+        // If no cycle found, try to create one first
+        try {
+          // Get current price
+          let currentPrice: number;
+          try {
+            currentPrice = await tradingProxy.getPrice(userId, `${token}USDT`);
+            if (!currentPrice) throw new Error('Could not get current price');
+          } catch (error) {
+            toast.error(`Cannot get current price for ${token}. Please try again.`);
+            return;
+          }
+          
+          // Create a new cycle
+          const response = await fetch('/api/cycles/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId,
+              token,
+              initialState: 'hold',
+              currentPrice
+            })
+          });
+          
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to create cycle');
+          }
+          
+          const newCycle = await response.json();
+          setCycles(prev => [...prev, newCycle]);
+          
+          // Use the new cycle ID for selling
+          toast.success(`Created tracking cycle for ${token}`);
+          
+          // Now execute the sell with the new cycle ID
+          return handleSellPosition(token, percentage);
+        } catch (err) {
+          toast.error(`Failed to create cycle for ${token}: ${(err as Error).message}`);
+          throw err;
+        }
+      }
+      
       // Validate the token can be traded
       const symbol = `${token}USDT`;
       try {
@@ -123,42 +171,14 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
         return;
       }
 
-      // Find or create cycle
-      let cycleId = null;
-      const existingCycle = cycles.find(c => c.token === token && ['entry', 'hold'].includes(c.state));
-      
-      if (existingCycle) {
-        cycleId = existingCycle.id;
-      } else {
-        try {
-          const response = await fetch('/api/cycles/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userId,
-              token,
-              initialState: 'hold',
-              currentPrice
-            })
-          });
-          
-          if (!response.ok) throw new Error('Failed to create cycle');
-          const newCycle = await response.json();
-          cycleId = newCycle.id;
-          setCycles(prev => [...prev, newCycle]);
-        } catch (err) {
-          toast.error(`Failed to initialize sell order for ${token}`);
-          throw err;
-        }
-      }
-
       // Execute sell with retries
       const executeSell = async () => {
+        // Use the cycles/active POST endpoint to sell
         const sellResponse = await fetch('/api/cycles/active', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            cycleId,
+            cycleId: cycle.id, // Use the cycle ID from the found cycle
             token,
             percentage,
             userId,
@@ -168,7 +188,7 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
 
         if (!sellResponse.ok) {
           const error = await sellResponse.json();
-          throw new Error(error.message || 'Failed to sell position');
+          throw new Error(error.error || `Failed to sell position (${sellResponse.status})`);
         }
 
         return await sellResponse.json();
@@ -197,6 +217,7 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
           fetchPositions();
         } catch (error) {
           attempt++;
+          console.error(`Sell attempt ${attempt} failed:`, error);
           if (attempt === MAX_RETRIES) throw error;
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
