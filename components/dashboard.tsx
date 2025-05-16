@@ -30,7 +30,7 @@ interface Signal {
   riskLevel: "low" | "medium" | "high";
   createdAt: string;
   expiresAt: string;
-  autoExecuted: boolean;
+  autoExecuted?: boolean;
   link?: string;
   positives?: string[];
   warnings?: string[];
@@ -48,6 +48,7 @@ interface DashboardProps {
 
 export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: DashboardProps) {
   const [signals, setSignals] = useState<Signal[]>([])
+  const [filteredSignals, setFilteredSignals] = useState<Signal[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [userHoldings, setUserHoldings] = useState<Record<string, number>>({})
   const [showConnectModal, setShowConnectModal] = useState(false)
@@ -72,6 +73,7 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       // Calculate time 24 hours ago
       const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000
       
+      // Use query parameters to fetch all signals from the last 24 hours
       // Use _t parameter to prevent caching
       const response = await fetch(`/api/signals/latest?since=${twentyFourHoursAgo}&_t=${Date.now()}`)
       
@@ -83,7 +85,15 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       
       if (data.signals && Array.isArray(data.signals)) {
         setSignals(data.signals)
-        logger.info(`Fetched ${data.signals.length} signals (${data.signals.filter((s: any) => s.canExecute).length} can be executed)`)
+        
+        // Log how many active signals are found
+        const activeCount = data.signals.filter((s: any) => s.canExecute).length
+        logger.info(`Fetched ${data.signals.length} signals (${activeCount} can be executed)`)
+        
+        // Auto-switch to "active" filter tab if there are active signals
+        if (activeCount > 0 && signalFilterTab !== "active") {
+          setSignalFilterTab("active")
+        }
       } else {
         setSignals([])
       }
@@ -97,7 +107,36 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       setIsLoading(false)
       setRefreshing(false)
     }
-  }, [])
+  }, [signalFilterTab])
+
+  // Effect to filter signals when the tab changes or signals are updated
+  useEffect(() => {
+    logger.info(`Filtering signals for tab: ${signalFilterTab}`)
+    
+    // Apply filtering based on active/history tab
+    const filtered = signals.filter(signal => {
+      // For active tab, show signals that can be executed
+      if (signalFilterTab === "active") {
+        return signal.canExecute === true
+      } 
+      // For history tab, show signals that cannot be executed (expired)
+      else {
+        return signal.canExecute === false
+      }
+    })
+    
+    // Further filter SELL signals if user doesn't own the token
+    const finalFiltered = filtered.filter(signal => {
+      if (signal.type === "SELL") {
+        const userOwnsToken = !!userHoldings[signal.token] && userHoldings[signal.token] > 0
+        return userOwnsToken
+      }
+      return true // Keep all BUY signals
+    })
+    
+    logger.info(`Filtered ${signals.length} signals to ${finalFiltered.length} for ${signalFilterTab} tab`)
+    setFilteredSignals(finalFiltered)
+  }, [signals, signalFilterTab, userHoldings])
   
   // Fetch user holdings
   const fetchUserHoldings = async () => {
@@ -133,6 +172,12 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
     
     return () => clearInterval(intervalId)
   }, [fetchSignals])
+  
+  // Handle switching between active and history tabs
+  const handleTabChange = (tab: string) => {
+    logger.info(`Switching to ${tab} tab`)
+    setSignalFilterTab(tab)
+  }
   
   // Handle signal actions
   const handleSignalAction = async (action: "accept" | "skip" | "accept-partial", signalId: string, percentage?: number) => {
@@ -211,6 +256,10 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
     }
   }
   
+  // Count active and history signals
+  const activeSignalCount = signals.filter(s => s.canExecute === true).length
+  const historySignalCount = signals.filter(s => s.canExecute === false).length
+  
   if (isLoading && signals.length === 0) {
     return (
       <div className="container mx-auto p-4 pb-20">
@@ -240,19 +289,6 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       </div>
     )
   }
-  
-  // Filtered signals based on active/history tab
-  const filteredSignals = signals.filter(signal => {
-    if (signalFilterTab === "active") {
-      return signal.canExecute === true;
-    } else {
-      return signal.canExecute === false;
-    }
-  });
-  
-  // Get counts for tabs
-  const activeSignalCount = signals.filter(s => s.canExecute === true).length;
-  const historySignalCount = signals.filter(s => s.canExecute === false).length;
   
   return (
     <div className="container mx-auto p-4 pb-20">
@@ -305,22 +341,24 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
               Last updated: {lastUpdated.toLocaleTimeString()}
             </div>
             
-            <TabsList>
-              <TabsTrigger 
-                value="active" 
-                onClick={() => setSignalFilterTab("active")}
-                className={signalFilterTab === "active" ? "bg-primary text-white" : ""}
+            <div className="flex space-x-2">
+              <Button 
+                variant={signalFilterTab === "active" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleTabChange("active")}
+                className="flex items-center gap-1"
               >
                 Active ({activeSignalCount})
-              </TabsTrigger>
-              <TabsTrigger 
-                value="history" 
-                onClick={() => setSignalFilterTab("history")}
-                className={signalFilterTab === "history" ? "bg-primary text-white" : ""}
+              </Button>
+              <Button 
+                variant={signalFilterTab === "history" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleTabChange("history")}
+                className="flex items-center gap-1"
               >
                 History ({historySignalCount})
-              </TabsTrigger>
-            </TabsList>
+              </Button>
+            </div>
           </div>
           
           {filteredSignals.length === 0 ? (
@@ -342,11 +380,6 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
             <div className="space-y-3">
               {filteredSignals.map(signal => {
                 const userOwnsToken = !!userHoldings[signal.token] && userHoldings[signal.token] > 0;
-                
-                // Skip SELL signals for tokens the user doesn't own
-                if (signal.type === "SELL" && !userOwnsToken) {
-                  return null;
-                }
                 
                 return (
                   <SignalCard 
