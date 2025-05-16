@@ -1,4 +1,3 @@
-// app/api/signals/latest/route.ts - Updated to fetch signals from last 30 minutes
 import { type NextRequest, NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/auth"
 import { connectToDatabase, models } from "@/lib/db"
@@ -26,23 +25,25 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const sinceParam = searchParams.get("since")
     
-    // Default to 30 minutes ago for tradeable signals
-    const defaultTime = Date.now() - 30 * 60 * 1000
+    // Default to 24 hours ago for showing more historical signals
+    const defaultTime = Date.now() - 24 * 60 * 60 * 1000 // 24 hours instead of 30 minutes
     const since = sinceParam ? parseInt(sinceParam) : defaultTime
     
     // Create a date from the timestamp
     const sinceDate = new Date(since)
     
-    // Fetch active signals from the database
+    // Fetch active signals from the database - include expired ones too
     const dbSignals = await models.Signal.find({
       createdAt: { $gte: sinceDate },
-      expiresAt: { $gt: new Date() }, // Only active signals
       price: { $gt: 0 } // Only signals with valid prices
     }).sort({ createdAt: -1 })
     
     if (!dbSignals || dbSignals.length === 0) {
+      logger.info("No signals found in the database for the specified time period")
       return NextResponse.json({ signals: [] })
     }
+    
+    logger.info(`Found ${dbSignals.length} signals in the database`)
     
     // Extract user's current holdings if exchange is connected
     let userHoldings: string[] = []
@@ -52,6 +53,8 @@ export async function GET(request: NextRequest) {
         userHoldings = portfolio.holdings
           .filter((h: any) => h.amount > 0)
           .map((h: any) => h.token)
+        
+        logger.info(`User has holdings in: ${userHoldings.join(', ')}`)
       }
     }
     
@@ -59,16 +62,21 @@ export async function GET(request: NextRequest) {
     const filteredSignals = dbSignals
       .map((signal: any) => {
         const plainSignal = signal.toObject()
+        const now = new Date()
+        const createdAt = new Date(plainSignal.createdAt)
+        const tenMinutesLater = new Date(createdAt.getTime() + 10 * 60 * 1000)
+        const canExecute = now < tenMinutesLater
         
         return {
           ...plainSignal,
           id: plainSignal._id.toString(),
-          createdAt: new Date(plainSignal.createdAt).toISOString(),
-          expiresAt: new Date(plainSignal.expiresAt).toISOString()
+          createdAt: createdAt.toISOString(),
+          expiresAt: plainSignal.expiresAt.toISOString(),
+          canExecute: canExecute // Add this flag for frontend
         }
       })
       .filter((signal: any) => {
-        // For BUY signals, filter by risk level
+        // Show all signals that match user's risk level
         if (signal.type === "BUY") {
           return signal.riskLevel === user.riskLevel
         }
@@ -78,6 +86,8 @@ export async function GET(request: NextRequest) {
         }
         return false
       })
+    
+    logger.info(`Returning ${filteredSignals.length} filtered signals`)
     
     return NextResponse.json({ signals: filteredSignals })
   } catch (error) {

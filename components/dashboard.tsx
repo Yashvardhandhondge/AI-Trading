@@ -1,4 +1,3 @@
-"use client"
 
 import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent } from "@/components/ui/card"
@@ -12,7 +11,8 @@ import {
   Clock, 
   AlertCircle, 
   History, 
-  Bell 
+  Bell,
+  Archive
 } from "lucide-react"
 import { SignalCard } from "@/components/signal-card"
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
@@ -37,6 +37,7 @@ interface Signal {
   warning_count?: number;
   processed?: boolean;
   action?: string;
+  canExecute?: boolean;
 }
 
 interface DashboardProps {
@@ -55,8 +56,9 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [refreshing, setRefreshing] = useState(false)
   const [activeTab, setActiveTab] = useState<string>("signals")
+  const [signalFilterTab, setSignalFilterTab] = useState<string>("active")
   
-  // Fetch latest signals from database
+  // Fetch signals from database - get all signals from the last 24 hours
   const fetchSignals = useCallback(async (showLoadingState = true) => {
     try {
       if (showLoadingState) {
@@ -67,10 +69,11 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       
       setError(null)
       
-      // Calculate time 30 minutes ago for fetching recent signals
-      const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000
+      // Calculate time 24 hours ago
+      const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000
       
-      const response = await fetch(`/api/signals/latest?since=${thirtyMinutesAgo}&_t=${Date.now()}`)
+      // Use _t parameter to prevent caching
+      const response = await fetch(`/api/signals/latest?since=${twentyFourHoursAgo}&_t=${Date.now()}`)
       
       if (!response.ok) {
         throw new Error(`Failed to fetch signals: ${response.status}`)
@@ -79,23 +82,8 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       const data = await response.json()
       
       if (data.signals && Array.isArray(data.signals)) {
-        // Process signals to check which are within the 10-minute execution window
-        const processedSignals = data.signals.map((signal: Signal) => {
-          const createdDate = new Date(signal.createdAt)
-          const now = new Date()
-          const minutesAgo = Math.floor((now.getTime() - createdDate.getTime()) / (1000 * 60))
-          
-          // Only signals received within the last 10 minutes can be executed
-          const canExecute = minutesAgo < 10
-          
-          return {
-            ...signal,
-            canExecute
-          }
-        })
-        
-        setSignals(processedSignals)
-        logger.info(`Fetched ${processedSignals.length} signals (${processedSignals.filter((s: any) => s.canExecute).length} can be executed)`)
+        setSignals(data.signals)
+        logger.info(`Fetched ${data.signals.length} signals (${data.signals.filter((s: any) => s.canExecute).length} can be executed)`)
       } else {
         setSignals([])
       }
@@ -153,16 +141,6 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       
       if (!signal) {
         throw new Error("Signal not found")
-      }
-      
-      // Check if signal can be executed (within 10 minutes of creation)
-      const createdDate = new Date(signal.createdAt)
-      const now = new Date()
-      const minutesAgo = Math.floor((now.getTime() - createdDate.getTime()) / (1000 * 60))
-      
-      if ((action === "accept" || action === "accept-partial") && minutesAgo >= 10) {
-        toast.error("This signal has expired and can no longer be executed")
-        return
       }
       
       // Skip action doesn't require exchange connection
@@ -263,6 +241,19 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
     )
   }
   
+  // Filtered signals based on active/history tab
+  const filteredSignals = signals.filter(signal => {
+    if (signalFilterTab === "active") {
+      return signal.canExecute === true;
+    } else {
+      return signal.canExecute === false;
+    }
+  });
+  
+  // Get counts for tabs
+  const activeSignalCount = signals.filter(s => s.canExecute === true).length;
+  const historySignalCount = signals.filter(s => s.canExecute === false).length;
+  
   return (
     <div className="container mx-auto p-4 pb-20">
       <div className="flex justify-between items-center mb-4">
@@ -309,26 +300,52 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
         </TabsList>
           
         <TabsContent value="signals">
-          <div className="text-xs text-muted-foreground mb-2">
-            Last updated: {lastUpdated.toLocaleTimeString()}
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-xs text-muted-foreground">
+              Last updated: {lastUpdated.toLocaleTimeString()}
+            </div>
+            
+            <TabsList>
+              <TabsTrigger 
+                value="active" 
+                onClick={() => setSignalFilterTab("active")}
+                className={signalFilterTab === "active" ? "bg-primary text-white" : ""}
+              >
+                Active ({activeSignalCount})
+              </TabsTrigger>
+              <TabsTrigger 
+                value="history" 
+                onClick={() => setSignalFilterTab("history")}
+                className={signalFilterTab === "history" ? "bg-primary text-white" : ""}
+              >
+                History ({historySignalCount})
+              </TabsTrigger>
+            </TabsList>
           </div>
           
-          {signals.length === 0 ? (
+          {filteredSignals.length === 0 ? (
             <Card>
               <CardContent className="p-6 text-center">
-                <p className="text-muted-foreground">No signals in the last 30 minutes</p>
-                <p className="text-sm text-muted-foreground mt-2">New signals will appear here automatically</p>
+                <p className="text-muted-foreground">
+                  {signalFilterTab === "active" 
+                    ? "No active signals available" 
+                    : "No historical signals found"}
+                </p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  {signalFilterTab === "active" 
+                    ? "New signals will appear here automatically" 
+                    : "Past signals will appear here when they expire"}
+                </p>
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-3">
-              {signals.map(signal => {
-                const userOwnsToken = !!userHoldings[signal.token] && userHoldings[signal.token] > 0
-                const canExecute = (signal as any).canExecute
+              {filteredSignals.map(signal => {
+                const userOwnsToken = !!userHoldings[signal.token] && userHoldings[signal.token] > 0;
                 
                 // Skip SELL signals for tokens the user doesn't own
                 if (signal.type === "SELL" && !userOwnsToken) {
-                  return null
+                  return null;
                 }
                 
                 return (
@@ -338,9 +355,8 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
                     onAction={handleSignalAction} 
                     exchangeConnected={user.exchangeConnected}
                     userOwnsToken={userOwnsToken}
-                    canExecute={canExecute}
                   />
-                )
+                );
               })}
             </div>
           )}

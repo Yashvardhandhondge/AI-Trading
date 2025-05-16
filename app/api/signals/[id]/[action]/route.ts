@@ -1,4 +1,3 @@
-// app/api/signals/[id]/[action]/route.ts
 
 import { type NextRequest, NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/auth"

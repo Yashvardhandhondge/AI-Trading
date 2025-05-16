@@ -1,4 +1,4 @@
-// app/api/signals/store/route.ts
+
 import { type NextRequest, NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/auth"
 import { connectToDatabase, models } from "@/lib/db"

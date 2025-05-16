@@ -1,4 +1,4 @@
-// app/api/signals/auto-execute/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase, models } from "@/lib/db";
 import { tradingProxy } from "@/lib/trading-proxy";

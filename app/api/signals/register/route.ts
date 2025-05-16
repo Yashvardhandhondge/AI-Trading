@@ -1,4 +1,4 @@
-// app/api/signals/register/route.ts
+
 import { type NextRequest, NextResponse } from "next/server"
 import { connectToDatabase, models } from "@/lib/db"
 import { logger } from "@/lib/logger"

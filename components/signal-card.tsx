@@ -1,4 +1,4 @@
-// components/signal-card.tsx
+
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -25,6 +25,7 @@ interface Signal {
   warning_count?: number
   processed?: boolean
   action?: string
+  canExecute?: boolean
 }
 
 interface SignalCardProps {
@@ -33,7 +34,6 @@ interface SignalCardProps {
   exchangeConnected: boolean
   userOwnsToken?: boolean
   accumulatedPercentage?: number
-  canExecute?: boolean
 }
 
 export function SignalCard({ 
@@ -41,8 +41,7 @@ export function SignalCard({
   onAction, 
   exchangeConnected, 
   userOwnsToken = false,
-  accumulatedPercentage = 0,
-  canExecute = true
+  accumulatedPercentage = 0
 }: SignalCardProps) {
   const [timeLeft, setTimeLeft] = useState<number>(0)
   const [isLoading, setIsLoading] = useState<boolean>(false)
@@ -69,8 +68,8 @@ export function SignalCard({
       const secondsLeft = Math.floor(remainingTime / 1000)
       setTimeLeft(secondsLeft)
       
-      // Only set up timer if there's time left and signal can be executed
-      if (secondsLeft > 0 && canExecute) {
+      // Only set up timer if there's time left
+      if (secondsLeft > 0) {
         timerRef.current = setInterval(() => {
           setTimeLeft((prevTime) => {
             if (prevTime <= 1) {
@@ -95,7 +94,7 @@ export function SignalCard({
         timerRef.current = null
       }
     }
-  }, [signal.id, signal.createdAt, canExecute])
+  }, [signal.id, signal.createdAt])
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
@@ -104,7 +103,7 @@ export function SignalCard({
   }
 
   const handleAction = async (action: "accept" | "skip" | "accept-partial", percentage?: number): Promise<void> => {
-    if (!canExecute && action !== "skip") {
+    if (timeLeft <= 0 && action !== "skip") {
       toast.error("This signal has expired and can no longer be executed")
       return
     }
@@ -168,12 +167,19 @@ export function SignalCard({
       } else if (diffMins < 60) {
         return `${diffMins}m ago`
       } else {
-        return `${Math.floor(diffMins / 60)}h ago`
+        const hours = Math.floor(diffMins / 60)
+        if (hours < 24) {
+          return `${hours}h ago`
+        } else {
+          return `${Math.floor(hours / 24)}d ago`
+        }
       }
     } catch (e) {
       return "Unknown time"
     }
   }
+
+  const canExecute = signal.canExecute !== false && timeLeft > 0;
 
   return (
     <Card className={`${signal.type === "BUY" ? "border-green-500" : "border-red-500"} relative mb-6`}>
@@ -187,7 +193,12 @@ export function SignalCard({
             )}
             {signal.type} {signal.token}
           </CardTitle>
-          <Badge className={getRiskColor(signal.riskLevel)}>{signal.riskLevel.toUpperCase()} RISK</Badge>
+          <div className="flex items-center space-x-2">
+            <Badge className={getRiskColor(signal.riskLevel)}>{signal.riskLevel.toUpperCase()} RISK</Badge>
+            {signal.processed && (
+              <Badge variant="outline" className="bg-gray-100">Processed</Badge>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -221,7 +232,7 @@ export function SignalCard({
           </div>
         )}
 
-        {canExecute && timeLeft > 0 && exchangeConnected && (
+        {canExecute && exchangeConnected && (
           <div className="mt-4 relative">
             <div className="flex justify-between text-xs mb-1">
               <span className="font-medium">Execute within {formatTime(timeLeft)}</span>
