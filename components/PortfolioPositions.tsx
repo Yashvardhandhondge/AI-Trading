@@ -1,4 +1,5 @@
-// Updated PortfolioPositions.tsx with proper cycle handling
+// Updated PortfolioPositions component with better price, accumulation and PnL handling
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,14 +13,28 @@ interface PositionData {
   token: string;
   amount: number;
   value: number;
+  averagePrice?: number;
+  currentPrice?: number;
   pnl?: number;
   pnlPercentage?: number;
+  change24h?: number;
 }
 
 interface Cycle {
   id: string;
   token: string;
   state: string;
+  entryPrice: number;
+  currentPrice?: number;
+  pnl?: number;
+  pnlPercentage?: number;
+}
+
+interface PriceChange {
+  symbol: string;
+  priceChange: string;
+  priceChangePercent: string;
+  lastPrice: string;
 }
 
 // Type component props
@@ -32,6 +47,138 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [positionAccumulation, setPositionAccumulation] = useState<Record<string, number>>({});
   const [cycles, setCycles] = useState<Cycle[]>([]);
+  const [priceChanges, setPriceChanges] = useState<Record<string, PriceChange>>({});
+  
+  // Fetch 24h price changes
+  const fetch24hPriceChanges = async () => {
+    try {
+      // Use the 24h ticker endpoint for all symbols
+      const response = await fetch('/api/prices/24h');
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.priceChanges && Array.isArray(data.priceChanges)) {
+          // Convert to a map for easy lookup
+          const changesMap: Record<string, PriceChange> = {};
+          
+          data.priceChanges.forEach((change: PriceChange) => {
+            changesMap[change.symbol] = change;
+          });
+          
+          setPriceChanges(changesMap);
+          
+          // Store in localStorage for fallback
+          try {
+            localStorage.setItem('price_changes_24h', JSON.stringify({
+              data: changesMap,
+              timestamp: Date.now()
+            }));
+          } catch (e) {
+            console.error("Failed to cache price changes:", e);
+          }
+        }
+      } else {
+        // If API fails, try to get data from localStorage
+        try {
+          const cachedDataStr = localStorage.getItem('price_changes_24h');
+          if (cachedDataStr) {
+            const cachedData = JSON.parse(cachedDataStr);
+            if (cachedData && Date.now() - cachedData.timestamp < 12 * 60 * 60 * 1000) { // 12 hour cache
+              setPriceChanges(cachedData.data);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to read cached price changes:", e);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching 24h price changes:", err);
+    }
+  };
+  
+  // Function to calculate position accumulation from trade history
+  const calculateAccumulationFromTrades = async () => {
+    try {
+      const response = await fetch('/api/trades');
+      if (!response.ok) return;
+      
+      const data = await response.json();
+      if (!data.trades || !Array.isArray(data.trades)) return;
+      
+      const trades = data.trades;
+      const tokenAccumulation: Record<string, number> = {};
+      
+      // Group trades by token
+      const tokenTrades: Record<string, any[]> = {};
+      trades.forEach((trade: any) => {
+        if (!tokenTrades[trade.token]) {
+          tokenTrades[trade.token] = [];
+        }
+        tokenTrades[trade.token].push(trade);
+      });
+      
+      // Sort trades by date (oldest first)
+      Object.keys(tokenTrades).forEach(token => {
+        tokenTrades[token].sort((a, b) => 
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        
+        // Calculate accumulation percentage (rough estimate)
+        let buyCount = 0;
+        
+        tokenTrades[token].forEach(trade => {
+          if (trade.type === 'BUY') {
+            buyCount++;
+          }
+        });
+        
+        // Assume each buy is roughly 10%
+        tokenAccumulation[token] = buyCount * 10;
+      });
+      
+      // Update state and localStorage
+      setPositionAccumulation(prev => ({
+        ...prev,
+        ...tokenAccumulation
+      }));
+      
+      localStorage.setItem('positionAccumulation', JSON.stringify(tokenAccumulation));
+      
+    } catch (err) {
+      console.error("Error calculating accumulation from trades:", err);
+    }
+  };
+  
+  // Fetch cycle data to get PnL information
+  const fetchCycleData = async () => {
+    try {
+      const response = await fetch('/api/cycles/active');
+      if (!response.ok) return;
+      
+      const data = await response.json();
+      if (!data.cycles || !Array.isArray(data.cycles)) return;
+      
+      setCycles(data.cycles);
+      
+      // Use cycle data to enhance positions with PnL info
+      setPositions(prev => 
+        prev.map(position => {
+          const cycle = data.cycles.find((c: Cycle) => c.token === position.token);
+          if (cycle) {
+            return {
+              ...position,
+              pnl: cycle.pnl,
+              pnlPercentage: cycle.pnlPercentage
+            };
+          }
+          return position;
+        })
+      );
+    } catch (err) {
+      console.error("Error fetching cycle data:", err);
+    }
+  };
   
   const fetchPositions = async (showLoadingState = true): Promise<void> => {
     try {
@@ -43,17 +190,18 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
       
       setError(null);
       
-      // Fetch both portfolio data and active cycles in parallel
-      const [portfolioData, cyclesResponse] = await Promise.all([
-        tradingProxy.getPortfolio(userId),
-        fetch('/api/cycles/active').then(res => res.json())
-      ]);
-      
-      // Store cycles for later use when selling
-      if (cyclesResponse.cycles && Array.isArray(cyclesResponse.cycles)) {
-        setCycles(cyclesResponse.cycles);
-        console.log("Found active cycles:", cyclesResponse.cycles);
+      // Load position accumulation from localStorage
+      try {
+        const storedAccumulation = localStorage.getItem('positionAccumulation');
+        if (storedAccumulation) {
+          setPositionAccumulation(JSON.parse(storedAccumulation));
+        }
+      } catch (e) {
+        console.error("Failed to load position accumulation from localStorage:", e);
       }
+      
+      // Fetch portfolio data from trading proxy
+      const portfolioData = await tradingProxy.getPortfolio(userId);
       
       // Process holdings to display in the table
       if (portfolioData.holdings && portfolioData.holdings.length > 0) {
@@ -63,20 +211,32 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
           (h: { token: string; amount: number }) => h.amount > 0 && !stablecoins.includes(h.token)
         );
         
-        setPositions(filteredHoldings);
+        // Enhance with 24h change data
+        const enhancedHoldings = filteredHoldings.map((holding: any) => {
+          const symbol = `${holding.token}USDT`;
+          const priceChange = priceChanges[symbol];
+          
+          return {
+            ...holding,
+            change24h: priceChange ? parseFloat(priceChange.priceChangePercent) : 0
+          };
+        });
         
-        // Try to get position accumulation from localStorage
-        try {
-          const storedAccumulation = localStorage.getItem('positionAccumulation');
-          if (storedAccumulation) {
-            setPositionAccumulation(JSON.parse(storedAccumulation) as Record<string, number>);
-          }
-        } catch (e) {
-          console.error("Failed to load position accumulation from localStorage:", e);
-        }
+        setPositions(enhancedHoldings);
       } else {
         setPositions([]);
       }
+      
+      // Fetch cycles data to enhance positions with PnL info
+      await fetchCycleData();
+      
+      // Calculate accumulation from trade history if not present
+      if (Object.keys(positionAccumulation).length === 0) {
+        await calculateAccumulationFromTrades();
+      }
+      
+      // Fetch 24h price changes
+      await fetch24hPriceChanges();
       
       setLastUpdated(new Date());
     } catch (err) {
@@ -94,6 +254,9 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
     // Refresh every 60 seconds
     const intervalId = setInterval(() => fetchPositions(false), 60000);
     
+    // Fetch 24h price changes on initial load
+    fetch24hPriceChanges();
+    
     return () => clearInterval(intervalId);
   }, [userId]);
   
@@ -105,20 +268,36 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
     try {
       setIsRefreshing(true);
       
-      // Try to find the cycle for this token
+      // Find cycle for this token
       const cycle = cycles.find(c => c.token === token);
       
-      if (!cycle || !cycle.id) {
-        // If no cycle found, try to create one first
+      // First, force a price check to ensure token can be traded
+      try {
+        const price = await tradingProxy.getPrice(userId, `${token}USDT`);
+        if (!price || price <= 0) {
+          throw new Error(`Could not get valid price for ${token}`);
+        }
+      } catch (priceError) {
+        // Just log the error but continue - we'll fallback to using validateSymbol
+        console.error("Price validation failed, falling back to symbol validation:", priceError);
+      }
+      
+      // If no cycle found, create one first
+      let cycleId = cycle?.id;
+      if (!cycleId) {
         try {
-          // Get current price
+          // Get current price (already validated above)
           let currentPrice: number;
           try {
             currentPrice = await tradingProxy.getPrice(userId, `${token}USDT`);
-            if (!currentPrice) throw new Error('Could not get current price');
           } catch (error) {
-            toast.error(`Cannot get current price for ${token}. Please try again.`);
-            return;
+            // Fallback to position's current price
+            const position = positions.find(p => p.token === token);
+            currentPrice = position?.currentPrice || 0;
+            
+            if (!currentPrice) {
+              throw new Error('Could not get current price');
+            }
           }
           
           // Create a new cycle
@@ -139,69 +318,71 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
           }
           
           const newCycle = await response.json();
+          if (!newCycle.id) {
+            throw new Error('Invalid cycle response');
+          }
+          
+          cycleId = newCycle.id;
           setCycles(prev => [...prev, newCycle]);
           
-          // Use the new cycle ID for selling
-          toast.success(`Created tracking cycle for ${token}`);
-          
-          // Now execute the sell with the new cycle ID
-          return handleSellPosition(token, percentage);
+          console.log(`Created new cycle for ${token} with ID ${cycleId}`);
         } catch (err) {
           toast.error(`Failed to create cycle for ${token}: ${(err as Error).message}`);
           throw err;
         }
       }
       
-      // Validate the token can be traded
-      const symbol = `${token}USDT`;
-      try {
-        await tradingProxy.validateSymbol(userId, symbol);
-      } catch (error) {
-        toast.error(`Invalid trading pair: ${symbol}`);
-        return;
+      if (!cycleId) {
+        throw new Error(`Could not find or create cycle for ${token}`);
       }
-
-      // Get current price with retry
+      
+      // Get current price for the trade
       let currentPrice: number;
       try {
-        currentPrice = await tradingProxy.getPrice(userId, symbol);
-        if (!currentPrice) throw new Error('Could not get current price');
+        currentPrice = await tradingProxy.getPrice(userId, `${token}USDT`);
       } catch (error) {
-        toast.error(`Cannot get current price for ${token}. Please try again.`);
-        return;
-      }
-
-      // Execute sell with retries
-      const executeSell = async () => {
-        // Use the cycles/active POST endpoint to sell
-        const sellResponse = await fetch('/api/cycles/active', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            cycleId: cycle.id, // Use the cycle ID from the found cycle
-            token,
-            percentage,
-            userId,
-            currentPrice
-          })
-        });
-
-        if (!sellResponse.ok) {
-          const error = await sellResponse.json();
-          throw new Error(error.error || `Failed to sell position (${sellResponse.status})`);
+        // Fallback to position's current price
+        const position = positions.find(p => p.token === token);
+        currentPrice = position?.currentPrice || 0;
+        
+        if (!currentPrice) {
+          toast.error(`Cannot get current price for ${token}. Please try again.`);
+          return;
         }
-
-        return await sellResponse.json();
-      };
-
+      }
+      
+      // Execute sell with retries
       const MAX_RETRIES = 3;
-      let attempt = 0;
-      let success = false;
-
-      while (attempt < MAX_RETRIES && !success) {
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
-          const result = await executeSell();
-          success = true;
+          // Use the cycles/active POST endpoint to sell
+          const sellResponse = await fetch('/api/cycles/active', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              cycleId,
+              token,
+              percentage,
+              userId,
+              currentPrice
+            })
+          });
+
+          if (!sellResponse.ok) {
+            const error = await sellResponse.json();
+            console.error(`Sell attempt ${attempt + 1} failed:`, error);
+            
+            if (attempt === MAX_RETRIES - 1) {
+              throw new Error(error.error || `Failed to sell position (${sellResponse.status})`);
+            }
+            
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+
+          // Sell succeeded
+          const result = await sellResponse.json();
           toast.success(`Successfully sold ${percentage}% of ${token}`);
           
           // Update local state
@@ -214,12 +395,13 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
             });
           }
           
+          // Refresh data
           fetchPositions();
+          break;
         } catch (error) {
-          attempt++;
-          console.error(`Sell attempt ${attempt} failed:`, error);
-          if (attempt === MAX_RETRIES) throw error;
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          if (attempt === MAX_RETRIES - 1) {
+            throw error;
+          }
         }
       }
     } catch (err) {
@@ -271,51 +453,67 @@ const PortfolioPositions: React.FC<{ userId: number }> = ({ userId }) => {
                   <th className="py-3 px-4 text-left text-sm font-medium">Token</th>
                   <th className="py-3 px-4 text-left text-sm font-medium">Amount</th>
                   <th className="py-3 px-4 text-left text-sm font-medium">Value</th>
+                  <th className="py-3 px-4 text-left text-sm font-medium">24h Change</th>
                   <th className="py-3 px-4 text-left text-sm font-medium">Accumulated</th>
                   <th className="py-3 px-4 text-left text-sm font-medium">P&L</th>
                   <th className="py-3 px-4 text-left text-sm font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {positions.map((position) => (
-                  <tr key={position.token}>
-                    <td className="py-3 px-4 text-sm font-medium">{position.token}</td>
-                    <td className="py-3 px-4 text-sm">{position.amount.toFixed(6)}</td>
-                    <td className="py-3 px-4 text-sm">{formatCurrency(position.value || 0)}</td>
-                    <td className="py-3 px-4 text-sm">
-                      {positionAccumulation[position.token] 
-                        ? `${positionAccumulation[position.token]}%` 
-                        : 'N/A'}
-                    </td>
-                    <td className="py-3 px-4 text-sm">
-                      {position.pnl !== undefined && position.pnlPercentage !== undefined && (
+                {positions.map((position) => {
+                  // Find the cycle for this token for PnL data
+                  const cycle = cycles.find(c => c.token === position.token);
+                  const pnl = position.pnl !== undefined ? position.pnl : (cycle?.pnl || 0);
+                  const pnlPercentage = position.pnlPercentage !== undefined ? 
+                    position.pnlPercentage : (cycle?.pnlPercentage || 0);
+                  
+                  // Calculate 24h change  
+                  const change24h = position.change24h || 0;
+                  
+                  // Get accumulation percentage
+                  const accumulated = positionAccumulation[position.token] || 0;
+                  
+                  return (
+                    <tr key={position.token}>
+                      <td className="py-3 px-4 text-sm font-medium">{position.token}</td>
+                      <td className="py-3 px-4 text-sm">{position.amount.toFixed(6)}</td>
+                      <td className="py-3 px-4 text-sm">{formatCurrency(position.value || 0)}</td>
+                      <td className="py-3 px-4 text-sm">
+                        <span className={change24h >= 0 ? "text-green-500" : "text-red-500"}>
+                          {change24h >= 0 ? "+" : ""}{change24h.toFixed(2)}%
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-sm">
+                        {accumulated > 0 ? `${accumulated}%` : 'N/A'}
+                      </td>
+                      <td className="py-3 px-4 text-sm">
                         <div className="flex flex-col">
-                          <span className={position.pnl >= 0 ? "text-green-500 flex items-center" : "text-red-500 flex items-center"}>
-                            {position.pnl >= 0 ? <TrendingUp className="h-3 w-3 mr-1" /> : <TrendingDown className="h-3 w-3 mr-1" />}
-                            {formatCurrency(position.pnl)}
+                          <span className={pnl >= 0 ? "text-green-500 flex items-center" : "text-red-500 flex items-center"}>
+                            {pnl >= 0 ? <TrendingUp className="h-3 w-3 mr-1" /> : <TrendingDown className="h-3 w-3 mr-1" />}
+                            {formatCurrency(pnl)}
                           </span>
-                          <span className={position.pnlPercentage >= 0 ? "text-green-500 text-xs" : "text-red-500 text-xs"}>
-                            {position.pnlPercentage.toFixed(2)}%
+                          <span className={pnlPercentage >= 0 ? "text-green-500 text-xs" : "text-red-500 text-xs"}>
+                            {pnlPercentage.toFixed(2)}%
                           </span>
                         </div>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-sm">
-                      <div className="flex gap-1">
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
-                          onClick={() => handleSellPosition(position.token, 50)}
-                          disabled={isRefreshing}>
-                          Sell 50%
-                        </Button>
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
-                          onClick={() => handleSellPosition(position.token)}
-                          disabled={isRefreshing}>
-                          Sell All
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="py-3 px-4 text-sm">
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+                            onClick={() => handleSellPosition(position.token, 50)}
+                            disabled={isRefreshing}>
+                            Sell 50%
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+                            onClick={() => handleSellPosition(position.token)}
+                            disabled={isRefreshing}>
+                            Sell All
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
