@@ -237,7 +237,7 @@ export async function POST(request: NextRequest) {
     logger.error(`Error processing sell request: ${error instanceof Error ? error.message : "Unknown error"}`);
     return NextResponse.json({ error: "Failed to process sell request" }, { status: 500 });
   }
-}c
+}
 
 // Helper function to format currency for guidance messages
 function formatCurrency(value: number): string {
