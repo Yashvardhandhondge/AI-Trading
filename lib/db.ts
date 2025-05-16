@@ -1,8 +1,7 @@
 // lib/db.ts - Fixed to properly export ActivityLog model
 import mongoose from "mongoose"
 import crypto from "crypto"
-import { SystemLog, SystemLogDocument } from "./schemas/system-log-schema" // Assuming SystemLogDocument is exported
-import ActivityLog from "./schemas/activity-log-schema" // Assuming ActivityLogDocument might be useful later or is part of its type
+import { SystemLog, SystemLogDocument } from "./schemas/system-log-schema"
 
 declare global {
   var mongooseConnectionCache: { conn: any; promise: any } | undefined // Renamed from mongoose
@@ -305,7 +304,5 @@ export const models = {
   Cycle: defineModel<CycleDocument>("Cycle", cycleSchema),
   Portfolio: defineModel<PortfolioDocument>("Portfolio", portfolioSchema),
   Notification: defineModel<NotificationDocument>("Notification", notificationSchema),
-  ActivityLog: ActivityLog, // Already robustly defined in its own file
   SystemLog: SystemLog      // Already robustly defined in its own file
-  
 };

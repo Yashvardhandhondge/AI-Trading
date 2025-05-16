@@ -2,7 +2,6 @@
 // lib/signal-service.ts
 import { logger } from "@/lib/logger";
 import { EkinApiService } from "@/lib/ekin-api";
-import ActivityLogService from "./activity-log-service";
 
 // Define interfaces for signal data
 export interface Signal {
@@ -384,7 +383,7 @@ public async executeSignalAction(
     
     logger.info(`Executing ${action} on signal ${signalId}`);
     
-    // Find the signal details to include in the activity log
+    // Find the signal details
     let signal: Signal | undefined;
     for (const s of this.cachedSignals) {
       if (s.id === signalId) {
@@ -404,53 +403,14 @@ public async executeSignalAction(
           }
         }
       } catch (e) {
-        // Continue even if we can't get signal details
         logger.error(`Error fetching signal details: ${e instanceof Error ? e.message : "Unknown error"}`);
       }
     }
     
-    // If we still don't have signal details, log with minimal info
-    if (!signal) {
-      logger.warn(`Executing action on signal with unknown details: ${signalId}`);
-    }
-    
-    // Create a new pending activity log entry
-    let activityLogId: string | undefined;
-    try {
-      const token = signal?.token || "unknown";
-      const logAction = action === "accept" 
-        ? signal?.type === "BUY" ? "BUY_ATTEMPT" : "SELL_ATTEMPT"
-        : action === "accept-partial" 
-          ? "SELL_ATTEMPT" 
-          : "SIGNAL_SKIPPED";
-      
-      const logEntry = await ActivityLogService.recordActivity({
-        userId: "currentUser", // This will be replaced with actual user ID in the API route
-        action: logAction,
-        token,
-        status: action === "skip" ? "success" : "pending", // Skip is immediately successful
-        details: action === "accept-partial" 
-          ? `Partial sell (${percentage}%) of ${token}` 
-          : action === "skip" 
-            ? `Skipped ${signal?.type || ""} signal for ${token}`
-            : `${signal?.type || ""} ${token}`,
-        price: signal?.price,
-        signalId
-      });
-      
-      activityLogId = logEntry._id.toString();
-    } catch (logError) {
-      // Continue even if logging fails
-      logger.error(`Error creating activity log: ${logError instanceof Error ? logError.message : "Unknown error"}`);
-    }
-    
-    // Rest of existing code for executeSignalAction...
     const body: Record<string, any> = {};
     if (percentage !== undefined) {
       body.percentage = percentage;
     }
-    
-    // Logic for temporary IDs same as before...
     
     // Execute the action
     const response = await fetch(`/api/signals/${signalId}/${action}`, {
@@ -461,40 +421,7 @@ public async executeSignalAction(
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ error: `Error ${response.status}` }));
-      const errorMessage = errorData.error || errorData.message || `Error ${response.status}`;
-      
-      // Update activity log with failure if we have a log ID
-      if (activityLogId) {
-        try {
-          await ActivityLogService.completeActivity(activityLogId, false, errorMessage);
-        } catch (e) {
-          // Just log the error
-          logger.error(`Error updating activity log: ${e instanceof Error ? e.message : "Unknown error"}`);
-        }
-      }
-      
-      throw new Error(errorMessage);
-    }
-    
-    // Update activity log with success if we have a log ID
-    if (activityLogId && action !== "skip") { // Skip already marked as success
-      try {
-        const responseData = await response.json();
-        const successAction = action === "accept"
-          ? signal?.type === "BUY" ? "BUY_SUCCESS" : "SELL_SUCCESS"
-          : "SELL_SUCCESS";
-          
-        await ActivityLogService.updateActivity(activityLogId, {
-          action: successAction,
-          status: "success",
-          tradeId: responseData.trade?._id,
-          amount: responseData.trade?.amount,
-          price: responseData.trade?.price || signal?.price
-        });
-      } catch (e) {
-        // Just log the error
-        logger.error(`Error updating activity log: ${e instanceof Error ? e.message : "Unknown error"}`);
-      }
+      throw new Error(errorData.error || errorData.message || `Error ${response.status}`);
     }
     
     logger.info(`Successfully executed ${action} on signal ${signalId}`);

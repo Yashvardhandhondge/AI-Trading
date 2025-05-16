@@ -16,7 +16,7 @@ import {
 } from "lucide-react"
 import { SignalCard } from "@/components/signal-card"
 import { ConnectExchangeModal } from "@/components/connect-exchange-modal"
-import { ActivityLogTable } from "./activity-log-table"
+
 import { toast } from "sonner"
 import { logger } from "@/lib/logger"
 import type { SessionUser } from "@/lib/auth"
@@ -395,9 +395,7 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
           )}
         </TabsContent>
         
-        <TabsContent value="activity">
-          <ActivityLogTable userId={user.id} />
-        </TabsContent>
+  
       </Tabs>
       
       <ConnectExchangeModal 
