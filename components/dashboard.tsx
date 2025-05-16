@@ -324,14 +324,10 @@ export function Dashboard({ user, onExchangeStatusChange, onSwitchToSettings }: 
       )}
       
       <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-2">
-        <TabsList className="grid grid-cols-2 mb-4">
+        <TabsList className="grid grid-cols-1 mb-4">
           <TabsTrigger value="signals" className="flex items-center gap-1">
             <Bell className="h-4 w-4" />
             <span>Signals</span>
-          </TabsTrigger>
-          <TabsTrigger value="activity" className="flex items-center gap-1">
-            <History className="h-4 w-4" />
-            <span>Activity Log</span>
           </TabsTrigger>
         </TabsList>
           

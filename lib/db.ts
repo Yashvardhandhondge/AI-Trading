@@ -1,4 +1,3 @@
-// lib/db.ts - Fixed to properly export ActivityLog model
 import mongoose from "mongoose"
 import crypto from "crypto"
 import { SystemLog, SystemLogDocument } from "./schemas/system-log-schema"
